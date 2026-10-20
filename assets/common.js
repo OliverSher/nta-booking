@@ -6,7 +6,7 @@
 const CONFIG = {
   // 部署 Google Apps Script 後，把 Web App 網址貼在這裡（見 README）。
   // 留空 = 示範模式：資料只存在目前這個瀏覽器，別人看不到。
-  apiUrl: "",
+  apiUrl: "https://script.google.com/macros/s/AKfycbxZuAXyiHFgvRcFwOBe8ZINKXKTqA9QoC7-D7hD0EGqVm8YQ7AM989QeGq_i6dt_hJs/exec",
 
   unit: "國立清華大學 NTA 機台管理單位",          // 報表抬頭
   instrument: "奈米粒子追蹤分析儀 (NTA)",
