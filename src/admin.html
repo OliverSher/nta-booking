@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NTA 預約管理</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="tag">Nanoparticle Tracking Analysis · Admin</div>
+      <h1>NTA 預約管理</h1>
+      <p class="sub">審核預約申請、鎖定或開放機台時段</p>
+    </div>
+    <div class="rates"><a class="rate-chip" href="index.html" style="text-decoration:none">← 回到預約頁</a><button class="b ghost sm" data-act="logout" id="logoutBtn" hidden>登出</button></div>
+  </header>
+  <div class="demo-banner" id="demoBanner" hidden><span><b>示範模式</b>：尚未連接資料庫，這裡只看得到「這個瀏覽器」送出的預約，鎖定的時段也只在這台電腦有效。示範密碼：<span class="mono">demo</span></span></div>
+  <main class="card" id="stage"></main>
+</div>
+
+<script>
+const A = {
+  key: "", data: null, loading: false, err: "", msg: "",
+  tab: "list", filter: "pending", weekOffset: 0, focusId: "", confirm: null, busyId: ""
+};
+try { A.key = sessionStorage.getItem("nta_admin_key") || ""; } catch (e) { }
+
+async function load() {
+  A.loading = true; A.err = ""; render();
+  try { A.data = await Api.call("admin_list", { key: A.key }); try { sessionStorage.setItem("nta_admin_key", A.key); } catch (e) { } }
+  catch (e) { A.err = e.message; A.data = null; if (/密碼/.test(e.message)) { A.key = ""; try { sessionStorage.removeItem("nta_admin_key"); } catch (_) { } } }
+  A.loading = false; render();
+}
+async function act(action, payload, okMsg) {
+  try { await Api.call(action, { key: A.key, ...payload }); A.msg = okMsg; A.confirm = null; await load(); }
+  catch (e) { A.err = e.message; render(); }
+}
+function adminSlotMap() {
+  const m = {}; if (!A.data) return m;
+  for (const b of A.data.bookings) if (b.status === "pending" || b.status === "approved")
+    for (const s of b.slots || []) m[s] = { state: b.status === "approved" ? "booked" : "pending", id: b.id };
+  for (const [k, v] of Object.entries(A.data.locks || {})) m[k] = { state: "locked", reason: v.reason || "" };
+  return m;
+}
+
+/* ----- 畫面 ----- */
+function render() {
+  $("#logoutBtn").hidden = !A.data;
+  $("#stage").innerHTML = !A.data ? loginView() : mainView();
+  const r = $("#lockReason"); if (r) r.value = A.lockReason || "";
+}
+function loginView() {
+  return `<h2>管理人員登入</h2><p class="hint">請輸入管理密碼（設定在 Apps Script 的 ADMIN_KEY）。</p>
+  <form id="loginForm" style="display:flex;flex-wrap:wrap;gap:10px;max-width:420px">
+    <input type="password" id="pw" placeholder="管理密碼" autocomplete="current-password" style="flex:1;min-width:180px" value="${esc(A.key)}">
+    <button class="b primary" type="submit"${A.loading ? " disabled" : ""}>${A.loading ? "登入中…" : "登入"}</button>
+  </form>${A.err ? `<p class="err">${esc(A.err)}</p>` : ""}`;
+}
+function mainView() {
+  const bs = A.data.bookings, cnt = s => bs.filter(b => s === "all" || b.status === s).length;
+  const tabsH = `<div class="tabs" role="tablist">
+    <button role="tab" data-tab="list" aria-selected="${A.tab === "list"}">預約清單 <span class="count">${cnt("pending")} 待確認</span></button>
+    <button role="tab" data-tab="cal" aria-selected="${A.tab === "cal"}">時段管理</button>
+    <span style="flex:1"></span><button class="b ghost sm" data-act="reload">${A.loading ? "更新中…" : "重新整理"}</button></div>`;
+  const msg = (A.msg ? `<div class="notice ok">${esc(A.msg)}</div>` : "") + (A.err ? `<p class="err">${esc(A.err)}</p>` : "");
+  return tabsH + msg + (A.tab === "list" ? listView(bs, cnt) : calView());
+}
+function listView(bs, cnt) {
+  const filters = [["pending", "待確認"], ["approved", "已核准"], ["rejected", "已退回"], ["cancelled", "已取消"], ["all", "全部"]];
+  const shown = bs.filter(b => A.filter === "all" || b.status === A.filter);
+  return `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">${filters.map(([k, l]) => `<button class="b sm${A.filter === k ? " primary" : ""}" data-filter="${k}">${l}（${cnt(k)}）</button>`).join("")}</div>
+  <div class="blist">${shown.length ? shown.map(bookingCard).join("") : `<p class="empty">目前沒有${filters.find(f => f[0] === A.filter)[1]}的預約</p>`}</div>`;
+}
+function bookingCard(b) {
+  const a = b.applicant || {}, d = b.details || {};
+  const det = [];
+  if (b.kind === "consult") det.push(["諮詢主題", d.topic], ["方案說明", d.detail], ["方便時間", d.prefer]);
+  if (b.kind === "service") det.push(["諮詢單號", d.ref], ["樣品", `${d.count} 件 ${d.type}`], ["粒徑／分散液", `${d.size || "—"} nm ／ ${d.solvent || "—"}`], ["量測次數", d.repeat], ["希望完成", d.date], ["需求", d.note]);
+  if (b.kind === "training") det.push(["訓練次別", `第 ${d.round} 次`]);
+  if (b.kind === "exam") (d.records || []).forEach((r, i) => det.push([`訓練 ${i + 1}`, `${r.trainee}｜訓練人 ${r.trainer}｜${r.date}｜${r.hours} hr`]));
+  if (b.kind === "self") det.push(["量測目的", d.purpose], ["樣品件數", d.samples]);
+  det.push(["Email／電話", `${a.email || ""}　${a.phone || ""}`], ["經費來源", a.account], ["備註", a.note]);
+  const c = A.confirm && A.confirm.id === b.id ? A.confirm.action : "";
+  const btn = (action, label, cls) => c === action
+    ? `<button class="b sm ${cls}" data-do="${action}" data-id="${b.id}">確定${label}？</button><button class="b ghost sm" data-act="unconfirm">取消</button>`
+    : `<button class="b sm ${cls}" data-ask="${action}" data-id="${b.id}">${label}</button>`;
+  const actions = [];
+  if (b.status === "pending") actions.push(`<button class="b sm ok" data-do="approved" data-id="${b.id}">核准並鎖定時段</button>`, btn("rejected", "退回", "danger"));
+  if (b.status === "approved") actions.push(btn("cancelled", "取消預約", "danger"));
+  if (b.status === "rejected" || b.status === "cancelled") actions.push(`<button class="b sm" data-do="pending" data-id="${b.id}">改回待確認</button>`);
+  return `<article class="bitem ${b.status}" id="b-${esc(b.id)}">
+    <div class="bhead"><span class="pill ${b.status}">${STATUS_LABEL[b.status] || b.status}</span><span class="who">${esc(a.name)}</span>
+      <span>${esc(RATE_LABEL[b.kind] || b.kind)}</span><span class="mono" style="font-size:.8rem">${esc(b.id)}</span><span style="flex:1"></span><span class="mono">${money(b.cost)}</span></div>
+    <div class="bmeta">${esc(a.dept)}　·　指導教授 ${esc(a.advisor)}　·　學號 ${esc(a.sid)}　·　送出 ${esc(fmtDateTime(b.createdAt))}</div>
+    ${(b.slots || []).length ? `<div class="bslots">${b.slots.map(fmtSlot).join("　")}</div>` : ""}
+    <details class="bdetail"><summary style="cursor:pointer;color:var(--muted)">詳細內容</summary><dl style="margin-top:6px">${det.filter(x => x[1]).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl></details>
+    ${b.adminNote ? `<div class="bmeta">管理備註：${esc(b.adminNote)}</div>` : ""}
+    <div class="bactions">${actions.join("")}
+      <input type="text" id="note-${esc(b.id)}" placeholder="管理備註（選填，會一起儲存）" value="${esc(b.adminNote || "")}">
+      <button class="b ghost sm" data-pdf="${b.id}"${A.busyId === b.id ? " disabled" : ""}>${A.busyId === b.id ? "產生中…" : "下載申請單"}</button></div>
+  </article>`;
+}
+function calView() {
+  const map = adminSlotMap(), focus = A.focusId && A.data.bookings.find(b => b.id === A.focusId);
+  return `<p class="hint">點空白時段 = 鎖定（暫停開放）；點「暫停開放」= 解除鎖定；點「待確認／已預約」可查看該筆預約並審核。</p>
+  <div class="lockbar"><label for="lockReason">鎖定原因</label><input type="text" id="lockReason" placeholder="例：保養、維修、內部使用"></div>
+  ${calendarHtml({ offset: A.weekOffset, minOffset: -4, maxOffset: CONFIG.weeksAhead + 4, map, admin: true, focusId: A.focusId })}
+  ${focus ? `<h3 style="font-size:.95rem;margin:18px 0 8px">選取的預約</h3>${bookingCard(focus)}` : ""}`;
+}
+
+/* ----- 事件 ----- */
+document.addEventListener("submit", e => {
+  if (e.target.id === "loginForm") { e.preventDefault(); A.key = $("#pw").value.trim(); if (A.key) load(); }
+});
+document.addEventListener("input", e => { if (e.target.id === "lockReason") A.lockReason = e.target.value; });
+document.addEventListener("click", async e => {
+  const t = e.target.closest("[data-act],[data-tab],[data-filter],[data-do],[data-ask],[data-slot],[data-day],[data-pdf]");
+  if (!t || t.disabled) return;
+  A.msg = ""; A.err = "";
+  if (t.dataset.tab) { A.tab = t.dataset.tab; render(); return; }
+  if (t.dataset.filter) { A.filter = t.dataset.filter; render(); return; }
+  if (t.dataset.ask) { A.confirm = { id: t.dataset.id, action: t.dataset.ask }; render(); return; }
+  if (t.dataset.do) {
+    const id = t.dataset.id, st = t.dataset.do, note = (document.getElementById("note-" + id) || {}).value;
+    if (st === "approved" || st === "pending") {     // 檢查是否與其他預約或鎖定衝突
+      const b = A.data.bookings.find(x => x.id === id), map = adminSlotMap();
+      const clash = (b.slots || []).filter(s => map[s] && map[s].id !== id);
+      if (clash.length) { A.err = "這些時段已被其他預約或鎖定佔用，無法" + (st === "approved" ? "核准" : "改回") + "：" + clash.map(fmtSlot).join("、"); render(); return; }
+    }
+    act("admin_status", { id, status: st, note }, `${id} 已更新為「${STATUS_LABEL[st]}」`); return;
+  }
+  if (t.dataset.pdf) {
+    A.busyId = t.dataset.pdf; render();
+    try { await downloadPdf(A.data.bookings.find(b => b.id === A.busyId)); } catch (err) { A.err = "PDF 產生失敗：" + err.message; }
+    A.busyId = ""; render(); return;
+  }
+  if (t.dataset.slot) {
+    const key = t.dataset.slot, info = adminSlotMap()[key];
+    if (!info) { act("admin_lock", { slots: [key], reason: A.lockReason || "" }, `已鎖定 ${fmtSlot(key)}`); return; }
+    if (info.state === "locked") { act("admin_unlock", { slots: [key] }, `已解除鎖定 ${fmtSlot(key)}`); return; }
+    A.focusId = info.id; render(); return;
+  }
+  if (t.dataset.day) {
+    const map = adminSlotMap(), keys = CONFIG.hours.map(h => t.dataset.day + "|" + h).filter(k => !map[k]);
+    if (!keys.length) { A.err = "這一天已沒有可鎖定的空白時段"; render(); return; }
+    act("admin_lock", { slots: keys, reason: A.lockReason || "" }, `已鎖定 ${t.dataset.day} 的 ${keys.length} 個時段`); return;
+  }
+  const a = t.dataset.act;
+  if (a === "reload") load();
+  if (a === "unconfirm") { A.confirm = null; render(); }
+  if (a === "wprev") { A.weekOffset--; render(); }
+  if (a === "wnext") { A.weekOffset++; render(); }
+  if (a === "logout") { A.key = ""; A.data = null; try { sessionStorage.removeItem("nta_admin_key"); } catch (_) { } render(); }
+});
+
+$("#demoBanner").hidden = !DEMO;
+if (A.key) load(); else render();
+</script>
+</body>
+</html>

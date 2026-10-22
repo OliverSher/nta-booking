@@ -3,20 +3,27 @@
 NTA（奈米粒子追蹤分析儀）機台的線上預約系統。
 
 - **預約頁** `index.html`：申請人資料 → 委託代工／自行操作 → 預約內容（諮詢、下單、訓練、考核、預約使用，含 $/hr 計價）→ 送出，然後下載申請單 PDF
-- **管理頁** `admin.html`：審核預約（核准／退回／取消）、鎖定或解除時段、重新下載申請單
+- **管理頁** `index.html#admin`：審核預約（核准／退回／取消）、鎖定或解除時段、重新下載申請單
 - **申請單 PDF**：固定 3 頁 A4，分別是申請人聯、管理人聯、機台使用切結書。內容再多也會自動縮放成一頁
+
+## 單一檔案版（系上主機上架用）
+`dist/` 資料夾就是交給網站管理員的完整套件：`nta-booking.html`（單一檔案，不連外部資源）、`Code.gs`、`安裝說明.txt`。
+管理頁是同一個檔案加上 `#admin`。
 
 ## 檔案結構
 ```
-index.html          申請人預約頁
-admin.html          管理人員頁
-assets/common.js    共用設定（CONFIG）、API、週曆、申請單與 PDF
-assets/style.css    樣式
+src/user.html       預約頁原始碼
+src/admin.html      管理頁原始碼
+src/common.js       共用設定（CONFIG）、API、週曆、申請單與 PDF
+src/style.css       樣式
+vendor/             html2canvas、jsPDF（內嵌進單一檔案）
+tools/build.py      合併成單一檔案：產生 index.html（GitHub Pages）與 dist/nta-booking.html
 apps-script/Code.gs Google Apps Script 後端（資料存在 Google 試算表）
 ```
+修改 `src/` 後執行 `python3 tools/build.py` 重新產生。
 
 ## 設定
-費率、系所清單、可預約時段、開放幾週內的時段都在 `assets/common.js` 最上面的 `CONFIG`。
+費率、系所清單、可預約時段等都在 `src/common.js`（或單一檔案最前面）的 `CONFIG`。
 
 ## 示範模式 vs 正式模式
 `CONFIG.apiUrl` 留空時是**示範模式**：資料只存在各自的瀏覽器，管理頁密碼是 `demo`。
@@ -32,7 +39,7 @@ apps-script/Code.gs Google Apps Script 後端（資料存在 Google 試算表）
    - 執行身分：**我**
    - 具有存取權的使用者：**所有人**
 7. 按部署，複製產生的 **網頁應用程式網址**（`https://script.google.com/macros/s/.../exec`）
-8. 把網址貼到 `assets/common.js` 的 `apiUrl: ""` 裡，commit 之後網站就會改用試算表
+8. 把網址貼到 `nta-booking.html`（或 `src/common.js`）的 `apiUrl: ""` 裡
 
 > 之後若修改 Code.gs，要到 **部署 → 管理部署作業 → 編輯 → 版本選「新版本」** 再部署，網址不會變。
 
