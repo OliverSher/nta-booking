@@ -10,12 +10,19 @@ const CONFIG = {
 
   unit: "國立清華大學 NTA 機台管理單位",          // 報表抬頭
   instrument: "奈米粒子追蹤分析儀 (NTA)",
-  rates: {                                       // NT$/hr（範例費率，請依實際公告修改）
-    consult: 0,       // 預約諮詢
-    service: 1200,    // 委託代工
-    training: 800,    // 機台訓練（每次 1 小時）
-    exam: 800,        // 機台考核
-    self: 600         // 自行操作
+  // 收費身分（申請人於第一步選擇，管理人員核對）
+  rateGroups: [
+    { id: "sponsor",  label: "清大先期贊助" },
+    { id: "coe",      label: "清大工學院" },
+    { id: "nthu",     label: "清大（工學院以外）" },
+    { id: "academic", label: "學界（校外學術單位）" },
+    { id: "industry", label: "業界" }
+  ],
+  // 收費標準（NT$），依 2026 年 NTA（Nanosight）使用收費表
+  rates: {
+    self:     { sponsor: 300,  coe: 400,  nthu: 500,  academic: 750,  industry: 1000 },  // 自行操作，元/hr
+    service:  { sponsor: 750,  coe: 750,  nthu: 750,  academic: 1000, industry: 1750 },  // 代工量測，元/hr
+    training: { sponsor: 3000, coe: 3000, nthu: 3000, academic: 3000, industry: 5000 }   // 訓練課程（訓練＋考核），元/套
   },
   hours: [9, 10, 11, 13, 14, 15, 16],            // 可預約起始時段（避開午休 12:00）
   maxSelfHours: 4,                               // 自行操作單次最多時數
@@ -28,6 +35,24 @@ const DEMO = !CONFIG.apiUrl;
 const DEMO_ADMIN_KEY = "demo";
 
 const RATE_LABEL = { consult: "預約諮詢", service: "委託代工", training: "機台訓練", exam: "機台考核", self: "自行操作" };
+const groupLabel = id => (CONFIG.rateGroups.find(g => g.id === id) || {}).label || "—";
+
+/* 計價：回傳 {rate, unit, qty, cost, note}
+   ・訓練課程按「套」收費（含 3 次訓練＋考核），於預約第 1 次訓練時計費；第 2、3 次訓練與考核不另收費 */
+function priceFor(kind, group, { hours = 0, round = "1" } = {}) {
+  const R = CONFIG.rates;
+  if (kind === "consult") return { rate: 0, unit: "hr", qty: 0, cost: 0, note: "諮詢不收費" };
+  if (kind === "service") { const r = R.service[group] || 0; return { rate: r, unit: "hr", qty: hours, cost: r * hours, note: "代工量測" }; }
+  if (kind === "self") { const r = R.self[group] || 0; return { rate: r, unit: "hr", qty: hours, cost: r * hours, note: "自行操作" }; }
+  const r = R.training[group] || 0;
+  if (kind === "training" && String(round) === "1") return { rate: r, unit: "套", qty: 1, cost: r, note: "訓練課程（3 次訓練＋考核）" };
+  return { rate: r, unit: "套", qty: 0, cost: 0, note: "已含於訓練課程費用" };
+}
+function priceTableHtml(highlight) {
+  const R = CONFIG.rates, c = n => n.toLocaleString("zh-TW");
+  return `<div class="rec-scroll"><table class="rec pricetable"><tr><th>收費身分</th><th>自行操作<br>元/hr</th><th>代工量測<br>元/hr</th><th>訓練課程（訓練＋考核）<br>元/套</th></tr>
+    ${CONFIG.rateGroups.map(g => `<tr${g.id === highlight ? ' class="hl"' : ""}><td>${esc(g.label)}</td><td class="mono">${c(R.self[g.id])}</td><td class="mono">${c(R.service[g.id])}</td><td class="mono">${c(R.training[g.id])}</td></tr>`).join("")}</table></div>`;
+}
 const STATUS_LABEL = { pending: "待確認", approved: "已核准", rejected: "已退回", cancelled: "已取消" };
 const WD = ["一", "二", "三", "四", "五"];
 
@@ -137,7 +162,10 @@ function detailRows(b) {
   if (k === "exam") rows.push(["訓練紀錄", H(`<table class="pt inner"><tr><th>#</th><th>受訓人</th><th>訓練人</th><th>受訓日期</th><th>時數</th></tr>${(d.records || []).map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.trainee)}</td><td>${esc(r.trainer)}</td><td>${esc(r.date)}</td><td>${esc(r.hours)}</td></tr>`).join("")}</table>`)]);
   if (k === "self") rows.push(["量測目的／樣品", `${d.purpose}（${d.samples || "—"} 件）`]);
   if ((b.slots || []).length) rows.push(["預約時段", H(b.slots.slice().sort().map(fmtSlot).join("<br>"))]);
-  rows.push(["計價方式", `${money(b.rate)} / hr`], ["計費時數／預估費用", H(`${b.hours} hr　／　<b>${money(b.cost)}</b>`)]);
+  const unit = b.unit || "hr", note = b.priceNote ? `（${esc(b.priceNote)}）` : "";
+  rows.push(["收費身分", groupLabel((b.applicant || {}).rateGroup)],
+    ["計價方式", H(`${money(b.rate)} / ${unit}${note}`)],
+    ["計費數量／預估費用", H(`${b.hours} ${unit}　／　<b>${money(b.cost)}</b>`)]);
   return rows;
 }
 function ptable(rows) { return `<table class="pt">${rows.map(([k, v]) => `<tr><th>${k}</th><td>${v && v.h !== undefined ? v.h : esc(v).replace(/\n/g, "<br>")}</td></tr>`).join("")}</table>`; }

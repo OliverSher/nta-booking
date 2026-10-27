@@ -98,6 +98,7 @@ function bookingCard(b) {
   return `<article class="bitem ${b.status}" id="b-${esc(b.id)}">
     <div class="bhead"><span class="pill ${b.status}">${STATUS_LABEL[b.status] || b.status}</span><span class="who">${esc(a.name)}</span>
       <span>${esc(RATE_LABEL[b.kind] || b.kind)}</span><span class="mono" style="font-size:.8rem">${esc(b.id)}</span><span style="flex:1"></span><span class="mono">${money(b.cost)}</span></div>
+    <div class="bmeta">收費身分：${esc(groupLabel(a.rateGroup))}　·　${money(b.rate)} / ${esc(b.unit || "hr")} × ${esc(b.hours)}${b.priceNote ? "（" + esc(b.priceNote) + "）" : ""}</div>
     <div class="bmeta">${esc(a.dept)}　·　指導教授 ${esc(a.advisor)}　·　學號 ${esc(a.sid)}　·　送出 ${esc(fmtDateTime(b.createdAt))}</div>
     ${(b.slots || []).length ? `<div class="bslots">${b.slots.map(fmtSlot).join("　")}</div>` : ""}
     <details class="bdetail"><summary style="cursor:pointer;color:var(--muted)">詳細內容</summary><dl style="margin-top:6px">${det.filter(x => x[1]).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl></details>

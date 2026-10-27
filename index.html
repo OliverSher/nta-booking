@@ -23,12 +23,19 @@ const CONFIG = {
 
   unit: "國立清華大學 NTA 機台管理單位",          // 報表抬頭
   instrument: "奈米粒子追蹤分析儀 (NTA)",
-  rates: {                                       // NT$/hr（範例費率，請依實際公告修改）
-    consult: 0,       // 預約諮詢
-    service: 1200,    // 委託代工
-    training: 800,    // 機台訓練（每次 1 小時）
-    exam: 800,        // 機台考核
-    self: 600         // 自行操作
+  // 收費身分（申請人於第一步選擇，管理人員核對）
+  rateGroups: [
+    { id: "sponsor",  label: "清大先期贊助" },
+    { id: "coe",      label: "清大工學院" },
+    { id: "nthu",     label: "清大（工學院以外）" },
+    { id: "academic", label: "學界（校外學術單位）" },
+    { id: "industry", label: "業界" }
+  ],
+  // 收費標準（NT$），依 2026 年 NTA（Nanosight）使用收費表
+  rates: {
+    self:     { sponsor: 300,  coe: 400,  nthu: 500,  academic: 750,  industry: 1000 },  // 自行操作，元/hr
+    service:  { sponsor: 750,  coe: 750,  nthu: 750,  academic: 1000, industry: 1750 },  // 代工量測，元/hr
+    training: { sponsor: 3000, coe: 3000, nthu: 3000, academic: 3000, industry: 5000 }   // 訓練課程（訓練＋考核），元/套
   },
   hours: [9, 10, 11, 13, 14, 15, 16],            // 可預約起始時段（避開午休 12:00）
   maxSelfHours: 4,                               // 自行操作單次最多時數
@@ -41,6 +48,24 @@ const DEMO = !CONFIG.apiUrl;
 const DEMO_ADMIN_KEY = "demo";
 
 const RATE_LABEL = { consult: "預約諮詢", service: "委託代工", training: "機台訓練", exam: "機台考核", self: "自行操作" };
+const groupLabel = id => (CONFIG.rateGroups.find(g => g.id === id) || {}).label || "—";
+
+/* 計價：回傳 {rate, unit, qty, cost, note}
+   ・訓練課程按「套」收費（含 3 次訓練＋考核），於預約第 1 次訓練時計費；第 2、3 次訓練與考核不另收費 */
+function priceFor(kind, group, { hours = 0, round = "1" } = {}) {
+  const R = CONFIG.rates;
+  if (kind === "consult") return { rate: 0, unit: "hr", qty: 0, cost: 0, note: "諮詢不收費" };
+  if (kind === "service") { const r = R.service[group] || 0; return { rate: r, unit: "hr", qty: hours, cost: r * hours, note: "代工量測" }; }
+  if (kind === "self") { const r = R.self[group] || 0; return { rate: r, unit: "hr", qty: hours, cost: r * hours, note: "自行操作" }; }
+  const r = R.training[group] || 0;
+  if (kind === "training" && String(round) === "1") return { rate: r, unit: "套", qty: 1, cost: r, note: "訓練課程（3 次訓練＋考核）" };
+  return { rate: r, unit: "套", qty: 0, cost: 0, note: "已含於訓練課程費用" };
+}
+function priceTableHtml(highlight) {
+  const R = CONFIG.rates, c = n => n.toLocaleString("zh-TW");
+  return `<div class="rec-scroll"><table class="rec pricetable"><tr><th>收費身分</th><th>自行操作<br>元/hr</th><th>代工量測<br>元/hr</th><th>訓練課程（訓練＋考核）<br>元/套</th></tr>
+    ${CONFIG.rateGroups.map(g => `<tr${g.id === highlight ? ' class="hl"' : ""}><td>${esc(g.label)}</td><td class="mono">${c(R.self[g.id])}</td><td class="mono">${c(R.service[g.id])}</td><td class="mono">${c(R.training[g.id])}</td></tr>`).join("")}</table></div>`;
+}
 const STATUS_LABEL = { pending: "待確認", approved: "已核准", rejected: "已退回", cancelled: "已取消" };
 const WD = ["一", "二", "三", "四", "五"];
 
@@ -150,7 +175,10 @@ function detailRows(b) {
   if (k === "exam") rows.push(["訓練紀錄", H(`<table class="pt inner"><tr><th>#</th><th>受訓人</th><th>訓練人</th><th>受訓日期</th><th>時數</th></tr>${(d.records || []).map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.trainee)}</td><td>${esc(r.trainer)}</td><td>${esc(r.date)}</td><td>${esc(r.hours)}</td></tr>`).join("")}</table>`)]);
   if (k === "self") rows.push(["量測目的／樣品", `${d.purpose}（${d.samples || "—"} 件）`]);
   if ((b.slots || []).length) rows.push(["預約時段", H(b.slots.slice().sort().map(fmtSlot).join("<br>"))]);
-  rows.push(["計價方式", `${money(b.rate)} / hr`], ["計費時數／預估費用", H(`${b.hours} hr　／　<b>${money(b.cost)}</b>`)]);
+  const unit = b.unit || "hr", note = b.priceNote ? `（${esc(b.priceNote)}）` : "";
+  rows.push(["收費身分", groupLabel((b.applicant || {}).rateGroup)],
+    ["計價方式", H(`${money(b.rate)} / ${unit}${note}`)],
+    ["計費數量／預估費用", H(`${b.hours} ${unit}　／　<b>${money(b.cost)}</b>`)]);
   return rows;
 }
 function ptable(rows) { return `<table class="pt">${rows.map(([k, v]) => `<tr><th>${k}</th><td>${v && v.h !== undefined ? v.h : esc(v).replace(/\n/g, "<br>")}</td></tr>`).join("")}</table>`; }
@@ -421,6 +449,10 @@ button.b.ghost{border-color:transparent;color:var(--muted);padding-inline:8px}
   ol.rail li .t{display:none}
 }
 @media (prefers-reduced-motion:no-preference){.slot{transition:background .12s}}
+.pricetable{margin-top:4px}
+.pricetable th{white-space:nowrap}
+.pricetable td.mono{text-align:right;padding-right:14px}
+.pricetable tr.hl td{background:var(--accent-soft);font-weight:700}
 
 </style>
 </head>
@@ -435,7 +467,6 @@ button.b.ghost{border-color:transparent;color:var(--muted);padding-inline:8px}
       <h1>NTA 機台預約系統</h1>
       <p class="sub">四步驟完成申請，送出後可下載申請單（申請人聯、管理人聯、切結書各一頁）</p>
     </div>
-    <div class="rates" id="rateChips"></div>
   </header>
 
   <div class="demo-banner" id="demoBanner" hidden>
@@ -897,7 +928,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 <script>
 function initUser() {
 
-const blankApplicant = () => ({ name: "", sid: "", dept: CONFIG.departments[0], advisor: "", email: "", phone: "", account: "", note: "" });
+const blankApplicant = () => ({ rateGroup: "", name: "", sid: "", dept: CONFIG.departments[0], advisor: "", email: "", phone: "", account: "", note: "" });
 const S = {
   step: 1,
   applicant: blankApplicant(),
@@ -929,6 +960,9 @@ function currentKind() {
   if (S.mode === "service") return S.sub.service === "consult" ? "consult" : "service";
   return { training: "training", exam: "exam", use: "self" }[S.sub.self];
 }
+function curPrice() {
+  return priceFor(currentKind(), S.applicant.rateGroup, { hours: billHours(), round: S.training.round });
+}
 function billHours() {
   const k = currentKind();
   if (k === "consult") return 0;
@@ -936,9 +970,10 @@ function billHours() {
   return S.slots[S.sub.self].length;
 }
 function priceBar() {
-  const k = currentKind(), r = CONFIG.rates[k], h = billHours();
-  return `<div class="pricebar"><span>計價方式：<b class="mono">${money(r)} / hr</b>（${RATE_LABEL[k]}）</span>
-    <span>計費時數：<b class="mono">${h} hr</b></span><span>預估費用：<span class="big">${money(r * h)}</span></span></div>`;
+  const p = curPrice();
+  return `<div class="pricebar"><span>收費身分：<b>${esc(groupLabel(S.applicant.rateGroup))}</b></span>
+    <span>計價方式：<b class="mono">${money(p.rate)} / ${p.unit}</b>（${esc(p.note)}）</span>
+    <span>計費數量：<b class="mono">${p.qty} ${p.unit}</b></span><span>預估費用：<span class="big">${money(p.cost)}</span></span></div>`;
 }
 function buildBooking() {
   const k = currentKind(), details = {
@@ -946,8 +981,8 @@ function buildBooking() {
     exam: { records: S.exam.records.map(r => ({ ...r })) }, self: { ...S.self }
   }[k];
   const slots = (k === "consult" || k === "service") ? [] : S.slots[S.sub.self].slice().sort();
-  const hours = billHours(), rate = CONFIG.rates[k];
-  return { mode: S.mode, kind: k, applicant: { ...S.applicant }, slots, hours, rate, cost: rate * hours, details,
+  const p = curPrice();
+  return { mode: S.mode, kind: k, applicant: { ...S.applicant }, slots, hours: p.qty, unit: p.unit, rate: p.rate, cost: p.cost, priceNote: p.note, details,
     ...(S.submitted ? { id: S.submitted.id, createdAt: S.submitted.createdAt, status: S.submitted.status } : {}) };
 }
 
@@ -965,6 +1000,9 @@ function step1() {
   const a = S.applicant;
   return `<h2>申請人資料</h2><p class="hint">標 * 為必填。經費來源用於後續請款。</p>
   <div class="grid">
+    <label class="f full"><span class="req">收費身分（管理人員會核對）</span><select id="a_rateGroup"><option value="">請選擇</option>${CONFIG.rateGroups.map(g => `<option value="${g.id}"${g.id === a.rateGroup ? " selected" : ""}>${esc(g.label)}</option>`).join("")}</select></label>
+    <details class="full"${a.rateGroup ? "" : " open"}><summary style="cursor:pointer;color:var(--muted);font-size:.85rem">收費標準</summary>${priceTableHtml(a.rateGroup)}
+      <p class="hint" style="margin:6px 0 0">訓練課程按「套」收費，含 3 次訓練與考核，於預約第 1 次訓練時計費。諮詢不收費。</p></details>
     ${field("a_name", "申請人姓名", a.name, { req: true })}
     ${field("a_sid", "學號 / 員工編號", a.sid, { req: true })}
     <label class="f"><span class="req">所屬系所</span><select id="a_dept">${CONFIG.departments.map(d => `<option${d === a.dept ? " selected" : ""}>${esc(d)}</option>`).join("")}</select></label>
@@ -1071,7 +1109,7 @@ function step4() {
 /* ----- 表單讀取 / 驗證 ----- */
 const v = id => { const e = document.getElementById(id); return e ? e.value.trim() : undefined; };
 function collect() {
-  if (S.step === 1) { const a = S.applicant; ["name", "sid", "dept", "advisor", "email", "phone", "account", "note"].forEach(k => { const x = v("a_" + k); if (x !== undefined) a[k] = x; }); }
+  if (S.step === 1) { const a = S.applicant; ["rateGroup", "name", "sid", "dept", "advisor", "email", "phone", "account", "note"].forEach(k => { const x = v("a_" + k); if (x !== undefined) a[k] = x; }); }
   if (S.step === 3) {
     if (v("c_topic") !== undefined) { S.consult.topic = v("c_topic"); S.consult.detail = v("c_detail"); S.consult.prefer = v("c_prefer"); }
     if (v("o_ref") !== undefined) ["ref", "count", "type", "size", "solvent", "repeat", "hours", "date", "note"].forEach(k => S.order[k] = v("o_" + k));
@@ -1085,7 +1123,7 @@ function validate() {
   const miss = [];
   const need = (id, label) => { const e = document.getElementById(id); if (e && !e.value.trim()) { e.classList.add("invalid"); miss.push(label); } };
   if (S.step === 1) {
-    need("a_name", "姓名"); need("a_sid", "學號"); need("a_advisor", "指導教授"); need("a_email", "Email");
+    need("a_rateGroup", "收費身分"); need("a_name", "姓名"); need("a_sid", "學號"); need("a_advisor", "指導教授"); need("a_email", "Email");
     const em = $("#a_email"); if (em && em.value && !/^\S+@\S+\.\S+$/.test(em.value)) { em.classList.add("invalid"); miss.push("正確的 Email 格式"); }
   }
   if (S.step === 3) {
@@ -1104,7 +1142,7 @@ function validate() {
 function bind() {
   $("#stage").querySelectorAll("input,select,textarea").forEach(el => el.addEventListener("input", () => {
     el.classList.remove("invalid");
-    if (S.step === 3 && el.id === "o_hours") { collect(); const p = $(".pricebar"); if (p) p.outerHTML = priceBar(); }
+    if (S.step === 3 && (el.id === "o_hours" || el.id === "t_round")) { collect(); const p = $(".pricebar"); if (p) p.outerHTML = priceBar(); }
   }));
   $("#stage").querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", () => { S.mode = r.value; }));
 }
@@ -1129,7 +1167,7 @@ async function pdf() {
   S.pdfBusy = false; render();
 }
 function fillExample() {
-  Object.assign(S.applicant, { name: "王小明", sid: "112033501", dept: "奈米工程與微系統研究所", advisor: "陳大文 教授", email: "xiaoming@example.com", phone: "0912-345-678", account: "NSTC 114-2221-E-007-000" });
+  Object.assign(S.applicant, { rateGroup: "coe", name: "王小明", sid: "112033501", dept: "奈米工程與微系統研究所", advisor: "陳大文 教授", email: "xiaoming@example.com", phone: "0912-345-678", account: "NSTC 114-2221-E-007-000" });
   S.consult = { topic: "外泌體 (exosome) 粒徑分佈與濃度量測", detail: "樣品為細胞培養上清液經超高速離心純化之外泌體，預計 6 件，溶於 PBS。想確認是否需要先稀釋、建議的濃度範圍，以及每件建議量測幾次。", prefer: "週二、週四下午" };
   S.self = { purpose: "奈米金粒子粒徑分佈量測", samples: "4" };
   render();
@@ -1156,7 +1194,6 @@ document.addEventListener("click", e => {
   if (a === "restart") { S.step = 2; S.slots = { training: [], exam: [], use: [] }; S.submitted = null; S.submitError = ""; loadSlots(); render(); window.scrollTo({ top: 0 }); }
 });
 
-$("#rateChips").innerHTML = Object.entries(CONFIG.rates).filter(([k]) => k !== "consult").map(([k, r]) => `<span class="rate-chip">${RATE_LABEL[k]} <b>${r}</b>/hr</span>`).join("");
 $("#demoBanner").hidden = !DEMO;
 $("#unitName").textContent = CONFIG.unit;
 render();
@@ -1237,6 +1274,7 @@ function bookingCard(b) {
   return `<article class="bitem ${b.status}" id="b-${esc(b.id)}">
     <div class="bhead"><span class="pill ${b.status}">${STATUS_LABEL[b.status] || b.status}</span><span class="who">${esc(a.name)}</span>
       <span>${esc(RATE_LABEL[b.kind] || b.kind)}</span><span class="mono" style="font-size:.8rem">${esc(b.id)}</span><span style="flex:1"></span><span class="mono">${money(b.cost)}</span></div>
+    <div class="bmeta">收費身分：${esc(groupLabel(a.rateGroup))}　·　${money(b.rate)} / ${esc(b.unit || "hr")} × ${esc(b.hours)}${b.priceNote ? "（" + esc(b.priceNote) + "）" : ""}</div>
     <div class="bmeta">${esc(a.dept)}　·　指導教授 ${esc(a.advisor)}　·　學號 ${esc(a.sid)}　·　送出 ${esc(fmtDateTime(b.createdAt))}</div>
     ${(b.slots || []).length ? `<div class="bslots">${b.slots.map(fmtSlot).join("　")}</div>` : ""}
     <details class="bdetail"><summary style="cursor:pointer;color:var(--muted)">詳細內容</summary><dl style="margin-top:6px">${det.filter(x => x[1]).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl></details>

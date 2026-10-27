@@ -44,7 +44,8 @@ NTA 機台預約系統 — 安裝說明（給網站管理員）
         apiUrl: "https://script.google.com/macros/s/……/exec",
  3. 同一段 CONFIG 裡也可以修改：
       unit         報表抬頭（單位名稱）
-      rates        各項費率（NT$/hr）
+      rateGroups   收費身分選項
+      rates        各身分費率（自行操作、代工量測：元/hr；訓練課程：元/套）
       hours        可預約的起始時段
       maxSelfHours 自行操作單次最多時數
       weeksAhead   開放預約幾週內的時段

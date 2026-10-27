@@ -18,7 +18,6 @@
       <h1>NTA 機台預約系統</h1>
       <p class="sub">四步驟完成申請，送出後可下載申請單（申請人聯、管理人聯、切結書各一頁）</p>
     </div>
-    <div class="rates" id="rateChips"></div>
   </header>
 
   <div class="demo-banner" id="demoBanner" hidden>
@@ -39,7 +38,7 @@
 </div>
 
 <script>
-const blankApplicant = () => ({ name: "", sid: "", dept: CONFIG.departments[0], advisor: "", email: "", phone: "", account: "", note: "" });
+const blankApplicant = () => ({ rateGroup: "", name: "", sid: "", dept: CONFIG.departments[0], advisor: "", email: "", phone: "", account: "", note: "" });
 const S = {
   step: 1,
   applicant: blankApplicant(),
@@ -71,6 +70,9 @@ function currentKind() {
   if (S.mode === "service") return S.sub.service === "consult" ? "consult" : "service";
   return { training: "training", exam: "exam", use: "self" }[S.sub.self];
 }
+function curPrice() {
+  return priceFor(currentKind(), S.applicant.rateGroup, { hours: billHours(), round: S.training.round });
+}
 function billHours() {
   const k = currentKind();
   if (k === "consult") return 0;
@@ -78,9 +80,10 @@ function billHours() {
   return S.slots[S.sub.self].length;
 }
 function priceBar() {
-  const k = currentKind(), r = CONFIG.rates[k], h = billHours();
-  return `<div class="pricebar"><span>計價方式：<b class="mono">${money(r)} / hr</b>（${RATE_LABEL[k]}）</span>
-    <span>計費時數：<b class="mono">${h} hr</b></span><span>預估費用：<span class="big">${money(r * h)}</span></span></div>`;
+  const p = curPrice();
+  return `<div class="pricebar"><span>收費身分：<b>${esc(groupLabel(S.applicant.rateGroup))}</b></span>
+    <span>計價方式：<b class="mono">${money(p.rate)} / ${p.unit}</b>（${esc(p.note)}）</span>
+    <span>計費數量：<b class="mono">${p.qty} ${p.unit}</b></span><span>預估費用：<span class="big">${money(p.cost)}</span></span></div>`;
 }
 function buildBooking() {
   const k = currentKind(), details = {
@@ -88,8 +91,8 @@ function buildBooking() {
     exam: { records: S.exam.records.map(r => ({ ...r })) }, self: { ...S.self }
   }[k];
   const slots = (k === "consult" || k === "service") ? [] : S.slots[S.sub.self].slice().sort();
-  const hours = billHours(), rate = CONFIG.rates[k];
-  return { mode: S.mode, kind: k, applicant: { ...S.applicant }, slots, hours, rate, cost: rate * hours, details,
+  const p = curPrice();
+  return { mode: S.mode, kind: k, applicant: { ...S.applicant }, slots, hours: p.qty, unit: p.unit, rate: p.rate, cost: p.cost, priceNote: p.note, details,
     ...(S.submitted ? { id: S.submitted.id, createdAt: S.submitted.createdAt, status: S.submitted.status } : {}) };
 }
 
@@ -107,6 +110,9 @@ function step1() {
   const a = S.applicant;
   return `<h2>申請人資料</h2><p class="hint">標 * 為必填。經費來源用於後續請款。</p>
   <div class="grid">
+    <label class="f full"><span class="req">收費身分（管理人員會核對）</span><select id="a_rateGroup"><option value="">請選擇</option>${CONFIG.rateGroups.map(g => `<option value="${g.id}"${g.id === a.rateGroup ? " selected" : ""}>${esc(g.label)}</option>`).join("")}</select></label>
+    <details class="full"${a.rateGroup ? "" : " open"}><summary style="cursor:pointer;color:var(--muted);font-size:.85rem">收費標準</summary>${priceTableHtml(a.rateGroup)}
+      <p class="hint" style="margin:6px 0 0">訓練課程按「套」收費，含 3 次訓練與考核，於預約第 1 次訓練時計費。諮詢不收費。</p></details>
     ${field("a_name", "申請人姓名", a.name, { req: true })}
     ${field("a_sid", "學號 / 員工編號", a.sid, { req: true })}
     <label class="f"><span class="req">所屬系所</span><select id="a_dept">${CONFIG.departments.map(d => `<option${d === a.dept ? " selected" : ""}>${esc(d)}</option>`).join("")}</select></label>
@@ -213,7 +219,7 @@ function step4() {
 /* ----- 表單讀取 / 驗證 ----- */
 const v = id => { const e = document.getElementById(id); return e ? e.value.trim() : undefined; };
 function collect() {
-  if (S.step === 1) { const a = S.applicant; ["name", "sid", "dept", "advisor", "email", "phone", "account", "note"].forEach(k => { const x = v("a_" + k); if (x !== undefined) a[k] = x; }); }
+  if (S.step === 1) { const a = S.applicant; ["rateGroup", "name", "sid", "dept", "advisor", "email", "phone", "account", "note"].forEach(k => { const x = v("a_" + k); if (x !== undefined) a[k] = x; }); }
   if (S.step === 3) {
     if (v("c_topic") !== undefined) { S.consult.topic = v("c_topic"); S.consult.detail = v("c_detail"); S.consult.prefer = v("c_prefer"); }
     if (v("o_ref") !== undefined) ["ref", "count", "type", "size", "solvent", "repeat", "hours", "date", "note"].forEach(k => S.order[k] = v("o_" + k));
@@ -227,7 +233,7 @@ function validate() {
   const miss = [];
   const need = (id, label) => { const e = document.getElementById(id); if (e && !e.value.trim()) { e.classList.add("invalid"); miss.push(label); } };
   if (S.step === 1) {
-    need("a_name", "姓名"); need("a_sid", "學號"); need("a_advisor", "指導教授"); need("a_email", "Email");
+    need("a_rateGroup", "收費身分"); need("a_name", "姓名"); need("a_sid", "學號"); need("a_advisor", "指導教授"); need("a_email", "Email");
     const em = $("#a_email"); if (em && em.value && !/^\S+@\S+\.\S+$/.test(em.value)) { em.classList.add("invalid"); miss.push("正確的 Email 格式"); }
   }
   if (S.step === 3) {
@@ -246,7 +252,7 @@ function validate() {
 function bind() {
   $("#stage").querySelectorAll("input,select,textarea").forEach(el => el.addEventListener("input", () => {
     el.classList.remove("invalid");
-    if (S.step === 3 && el.id === "o_hours") { collect(); const p = $(".pricebar"); if (p) p.outerHTML = priceBar(); }
+    if (S.step === 3 && (el.id === "o_hours" || el.id === "t_round")) { collect(); const p = $(".pricebar"); if (p) p.outerHTML = priceBar(); }
   }));
   $("#stage").querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", () => { S.mode = r.value; }));
 }
@@ -271,7 +277,7 @@ async function pdf() {
   S.pdfBusy = false; render();
 }
 function fillExample() {
-  Object.assign(S.applicant, { name: "王小明", sid: "112033501", dept: "奈米工程與微系統研究所", advisor: "陳大文 教授", email: "xiaoming@example.com", phone: "0912-345-678", account: "NSTC 114-2221-E-007-000" });
+  Object.assign(S.applicant, { rateGroup: "coe", name: "王小明", sid: "112033501", dept: "奈米工程與微系統研究所", advisor: "陳大文 教授", email: "xiaoming@example.com", phone: "0912-345-678", account: "NSTC 114-2221-E-007-000" });
   S.consult = { topic: "外泌體 (exosome) 粒徑分佈與濃度量測", detail: "樣品為細胞培養上清液經超高速離心純化之外泌體，預計 6 件，溶於 PBS。想確認是否需要先稀釋、建議的濃度範圍，以及每件建議量測幾次。", prefer: "週二、週四下午" };
   S.self = { purpose: "奈米金粒子粒徑分佈量測", samples: "4" };
   render();
@@ -298,7 +304,6 @@ document.addEventListener("click", e => {
   if (a === "restart") { S.step = 2; S.slots = { training: [], exam: [], use: [] }; S.submitted = null; S.submitError = ""; loadSlots(); render(); window.scrollTo({ top: 0 }); }
 });
 
-$("#rateChips").innerHTML = Object.entries(CONFIG.rates).filter(([k]) => k !== "consult").map(([k, r]) => `<span class="rate-chip">${RATE_LABEL[k]} <b>${r}</b>/hr</span>`).join("");
 $("#demoBanner").hidden = !DEMO;
 $("#unitName").textContent = CONFIG.unit;
 render();
