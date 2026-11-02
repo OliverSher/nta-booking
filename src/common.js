@@ -23,7 +23,7 @@ const CONFIG = {
     service:  { sponsor: 750,  coe: 750,  nthu: 750,  academic: 1000, industry: 1750 },  // 代工量測，元/hr
     training: { sponsor: 3000, coe: 3000, nthu: 3000, academic: 3000, industry: 5000 }   // 訓練課程（訓練＋考核），元/套
   },
-  // 先期贊助（配合款）教授：指導教授在名單上的學生自動適用 rates 裡的 sponsor 價格
+  // 先期贊助（配合款）教授：會列在「收費身分」下拉選單，選擇後適用 rates 裡的 sponsor 價格
   sponsorAdvisors: ["陳玉彬", "李明蒼", "黃振煌", "黃郁棻", "林幸瑩", "魯才德", "蔡德豪", "陳之碩", "王玉麟"],
   billUnitMinutes: 15,                           // 簽退計費單位（分鐘），不足一單位以一單位計
   paymentNote: "請於收到繳費單後依機台管理單位指示完成繳費；校內計畫經費請辦理經費轉帳。",  // 繳費單上的繳費說明
@@ -45,10 +45,18 @@ function sponsorMatch(advisor) {
   const n = String(advisor || "").replace(/\s|教授|老師|博士/g, "");
   return n ? (CONFIG.sponsorAdvisors.find(x => n.includes(x)) || "") : "";
 }
-function billingGroup(a) { return sponsorMatch((a || {}).advisor) ? "sponsor" : (a || {}).rateGroup; }
+/* 收費身分值：一般身分為 "coe" 等；先期贊助為 "sponsor:教授姓名" */
+const sponsorOf = g => String(g || "").startsWith("sponsor:") ? String(g).slice(8) : "";
+function billingGroup(a) { return sponsorOf((a || {}).rateGroup) ? "sponsor" : (a || {}).rateGroup; }
 function billingLabel(a) {
-  const m = sponsorMatch((a || {}).advisor);
-  return m ? `先期贊助（指導教授 ${m}）` : groupLabel((a || {}).rateGroup);
+  const m = sponsorOf((a || {}).rateGroup);
+  return m ? `先期贊助（${m} 教授）` : groupLabel((a || {}).rateGroup);
+}
+function rateGroupOptions(sel) {
+  const o = (v, l) => `<option value="${esc(v)}"${v === sel ? " selected" : ""}>${esc(l)}</option>`;
+  return `<option value="">請選擇</option>
+    <optgroup label="先期贊助教授之學生">${CONFIG.sponsorAdvisors.map(n => o("sponsor:" + n, `先期贊助－${n} 教授`)).join("")}</optgroup>
+    <optgroup label="一般收費">${CONFIG.rateGroups.map(g => o(g.id, g.label)).join("")}</optgroup>`;
 }
 
 /* 計價：回傳 {rate, unit, qty, cost, note}
@@ -67,7 +75,7 @@ function priceTableHtml(highlight) {
   const groups = [{ id: "sponsor", label: "先期贊助教授之學生" }, ...CONFIG.rateGroups];
   return `<div class="rec-scroll"><table class="rec pricetable"><tr><th>收費身分</th><th>自行操作<br>元/hr</th><th>代工量測<br>元/hr</th><th>訓練課程（訓練＋考核）<br>元/套</th></tr>
     ${groups.map(g => `<tr${g.id === highlight ? ' class="hl"' : ""}><td>${esc(g.label)}</td><td class="mono">${c(R.self[g.id])}</td><td class="mono">${c(R.service[g.id])}</td><td class="mono">${c(R.training[g.id])}</td></tr>`).join("")}</table></div>
-    <p class="hint" style="margin:6px 0 0">先期贊助教授：${CONFIG.sponsorAdvisors.map(esc).join("、")}。指導教授在名單上會自動套用。</p>`;
+    <p class="hint" style="margin:6px 0 0">先期贊助教授：${CONFIG.sponsorAdvisors.map(esc).join("、")}。指導教授在名單上的同學，收費身分請選「先期贊助－教授姓名」。</p>`;
 }
 const STATUS_LABEL = { pending: "待確認", approved: "已核准", completed: "已結算", rejected: "已退回", cancelled: "已取消" };
 const WD = ["一", "二", "三", "四", "五"];

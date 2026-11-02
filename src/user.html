@@ -111,7 +111,7 @@ function step1() {
   const a = S.applicant;
   return `<h2>申請人資料</h2><p class="hint">標 * 為必填。經費來源用於後續請款。</p>
   <div class="grid">
-    <label class="f full"><span class="req">收費身分（管理人員會核對）</span><select id="a_rateGroup"><option value="">請選擇</option>${CONFIG.rateGroups.map(g => `<option value="${g.id}"${g.id === a.rateGroup ? " selected" : ""}>${esc(g.label)}</option>`).join("")}</select></label>
+    <label class="f full"><span class="req">收費身分（管理人員會核對）</span><select id="a_rateGroup">${rateGroupOptions(a.rateGroup)}</select></label>
     <details class="full"${a.rateGroup ? "" : " open"}><summary style="cursor:pointer;color:var(--muted);font-size:.85rem">收費標準</summary>${priceTableHtml(billingGroup(a))}
       <p class="hint" style="margin:6px 0 0">訓練課程按「套」收費，含 3 次訓練與考核，於預約第 1 次訓練時計費。諮詢不收費。</p></details>
     ${field("a_name", "申請人姓名", a.name, { req: true })}
@@ -119,7 +119,7 @@ function step1() {
     <label class="f"><span class="req">所屬系所</span><select id="a_dept">${CONFIG.departments.map(d => `<option${d === a.dept ? " selected" : ""}>${esc(d)}</option>`).join("")}</select></label>
     <label class="f"><span class="req">指導教授</span><input id="a_advisor" type="text" list="sponsorList" value="${esc(a.advisor)}" placeholder="例：王玉麟">
       <datalist id="sponsorList">${CONFIG.sponsorAdvisors.map(n => `<option value="${esc(n)}">`).join("")}</datalist>
-      <small id="sponsorHint" class="sponsor-hint">${sponsorHint(a.advisor)}</small></label>
+      <small id="sponsorHint" class="sponsor-hint">${sponsorHint(a.advisor, a.rateGroup)}</small></label>
     ${field("a_email", "Email", a.email, { type: "email", req: true })}
     ${field("a_phone", "聯絡電話", a.phone, { type: "tel" })}
     ${field("a_account", "計畫編號 / 經費來源", a.account, { full: true, ph: "例：NSTC 114-XXXX-E-007-XXX" })}
@@ -128,9 +128,10 @@ function step1() {
   <div class="err" id="err" hidden></div>
   <div class="btns"><span></span><button class="b primary" data-act="next">下一步：服務類型</button></div>`;
 }
-function sponsorHint(adv) {
+function sponsorHint(adv, group) {
   const m = sponsorMatch(adv);
-  return m ? `✓ ${esc(m)} 教授為先期贊助教授，自行操作適用 ${money(CONFIG.rates.self.sponsor)} / hr` : "";
+  if (!m || sponsorOf(group) === m) return "";
+  return `${esc(m)} 教授是先期贊助教授，收費身分可選「先期贊助－${esc(m)} 教授」（自行操作 ${money(CONFIG.rates.self.sponsor)} / hr）`;
 }
 function step2() {
   return `<h2>服務類型</h2><p class="hint">尚未通過機台考核者，請選擇「委託代工」或先預約機台訓練。</p>
@@ -259,7 +260,8 @@ function validate() {
 function bind() {
   $("#stage").querySelectorAll("input,select,textarea").forEach(el => el.addEventListener("input", () => {
     el.classList.remove("invalid");
-    if (el.id === "a_advisor") { const h = $("#sponsorHint"); if (h) h.innerHTML = sponsorHint(el.value); }
+    if (el.id === "a_rateGroup") { const n = sponsorOf(el.value), ad = $("#a_advisor"); if (n && ad && !ad.value.trim()) ad.value = n + " 教授"; }
+    if (el.id === "a_advisor" || el.id === "a_rateGroup") { const h = $("#sponsorHint"); if (h) h.innerHTML = sponsorHint($("#a_advisor").value, $("#a_rateGroup").value); }
     if (S.step === 3 && (el.id === "o_hours" || el.id === "t_round")) { collect(); const p = $(".pricebar"); if (p) p.outerHTML = priceBar(); }
   }));
   $("#stage").querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", () => { S.mode = r.value; }));
@@ -285,7 +287,7 @@ async function pdf() {
   S.pdfBusy = false; render();
 }
 function fillExample() {
-  Object.assign(S.applicant, { rateGroup: "coe", name: "王小明", sid: "112033501", dept: "奈米工程與微系統研究所", advisor: "陳大文 教授", email: "xiaoming@example.com", phone: "0912-345-678", account: "NSTC 114-2221-E-007-000" });
+  Object.assign(S.applicant, { rateGroup: "sponsor:王玉麟", name: "王小明", sid: "112033501", dept: "奈米工程與微系統研究所", advisor: "王玉麟 教授", email: "xiaoming@example.com", phone: "0912-345-678", account: "NSTC 114-2221-E-007-000" });
   S.consult = { topic: "外泌體 (exosome) 粒徑分佈與濃度量測", detail: "樣品為細胞培養上清液經超高速離心純化之外泌體，預計 6 件，溶於 PBS。想確認是否需要先稀釋、建議的濃度範圍，以及每件建議量測幾次。", prefer: "週二、週四下午" };
   S.self = { purpose: "奈米金粒子粒徑分佈量測", samples: "4" };
   render();

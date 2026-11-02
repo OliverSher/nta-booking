@@ -37,7 +37,7 @@ const CONFIG = {
     service:  { sponsor: 750,  coe: 750,  nthu: 750,  academic: 1000, industry: 1750 },  // 代工量測，元/hr
     training: { sponsor: 3000, coe: 3000, nthu: 3000, academic: 3000, industry: 5000 }   // 訓練課程（訓練＋考核），元/套
   },
-  // 先期贊助（配合款）教授：指導教授在名單上的學生自動適用 rates 裡的 sponsor 價格
+  // 先期贊助（配合款）教授：會列在「收費身分」下拉選單，選擇後適用 rates 裡的 sponsor 價格
   sponsorAdvisors: ["陳玉彬", "李明蒼", "黃振煌", "黃郁棻", "林幸瑩", "魯才德", "蔡德豪", "陳之碩", "王玉麟"],
   billUnitMinutes: 15,                           // 簽退計費單位（分鐘），不足一單位以一單位計
   paymentNote: "請於收到繳費單後依機台管理單位指示完成繳費；校內計畫經費請辦理經費轉帳。",  // 繳費單上的繳費說明
@@ -59,10 +59,18 @@ function sponsorMatch(advisor) {
   const n = String(advisor || "").replace(/\s|教授|老師|博士/g, "");
   return n ? (CONFIG.sponsorAdvisors.find(x => n.includes(x)) || "") : "";
 }
-function billingGroup(a) { return sponsorMatch((a || {}).advisor) ? "sponsor" : (a || {}).rateGroup; }
+/* 收費身分值：一般身分為 "coe" 等；先期贊助為 "sponsor:教授姓名" */
+const sponsorOf = g => String(g || "").startsWith("sponsor:") ? String(g).slice(8) : "";
+function billingGroup(a) { return sponsorOf((a || {}).rateGroup) ? "sponsor" : (a || {}).rateGroup; }
 function billingLabel(a) {
-  const m = sponsorMatch((a || {}).advisor);
-  return m ? `先期贊助（指導教授 ${m}）` : groupLabel((a || {}).rateGroup);
+  const m = sponsorOf((a || {}).rateGroup);
+  return m ? `先期贊助（${m} 教授）` : groupLabel((a || {}).rateGroup);
+}
+function rateGroupOptions(sel) {
+  const o = (v, l) => `<option value="${esc(v)}"${v === sel ? " selected" : ""}>${esc(l)}</option>`;
+  return `<option value="">請選擇</option>
+    <optgroup label="先期贊助教授之學生">${CONFIG.sponsorAdvisors.map(n => o("sponsor:" + n, `先期贊助－${n} 教授`)).join("")}</optgroup>
+    <optgroup label="一般收費">${CONFIG.rateGroups.map(g => o(g.id, g.label)).join("")}</optgroup>`;
 }
 
 /* 計價：回傳 {rate, unit, qty, cost, note}
@@ -81,7 +89,7 @@ function priceTableHtml(highlight) {
   const groups = [{ id: "sponsor", label: "先期贊助教授之學生" }, ...CONFIG.rateGroups];
   return `<div class="rec-scroll"><table class="rec pricetable"><tr><th>收費身分</th><th>自行操作<br>元/hr</th><th>代工量測<br>元/hr</th><th>訓練課程（訓練＋考核）<br>元/套</th></tr>
     ${groups.map(g => `<tr${g.id === highlight ? ' class="hl"' : ""}><td>${esc(g.label)}</td><td class="mono">${c(R.self[g.id])}</td><td class="mono">${c(R.service[g.id])}</td><td class="mono">${c(R.training[g.id])}</td></tr>`).join("")}</table></div>
-    <p class="hint" style="margin:6px 0 0">先期贊助教授：${CONFIG.sponsorAdvisors.map(esc).join("、")}。指導教授在名單上會自動套用。</p>`;
+    <p class="hint" style="margin:6px 0 0">先期贊助教授：${CONFIG.sponsorAdvisors.map(esc).join("、")}。指導教授在名單上的同學，收費身分請選「先期贊助－教授姓名」。</p>`;
 }
 const STATUS_LABEL = { pending: "待確認", approved: "已核准", completed: "已結算", rejected: "已退回", cancelled: "已取消" };
 const WD = ["一", "二", "三", "四", "五"];
@@ -1112,7 +1120,7 @@ function step1() {
   const a = S.applicant;
   return `<h2>申請人資料</h2><p class="hint">標 * 為必填。經費來源用於後續請款。</p>
   <div class="grid">
-    <label class="f full"><span class="req">收費身分（管理人員會核對）</span><select id="a_rateGroup"><option value="">請選擇</option>${CONFIG.rateGroups.map(g => `<option value="${g.id}"${g.id === a.rateGroup ? " selected" : ""}>${esc(g.label)}</option>`).join("")}</select></label>
+    <label class="f full"><span class="req">收費身分（管理人員會核對）</span><select id="a_rateGroup">${rateGroupOptions(a.rateGroup)}</select></label>
     <details class="full"${a.rateGroup ? "" : " open"}><summary style="cursor:pointer;color:var(--muted);font-size:.85rem">收費標準</summary>${priceTableHtml(billingGroup(a))}
       <p class="hint" style="margin:6px 0 0">訓練課程按「套」收費，含 3 次訓練與考核，於預約第 1 次訓練時計費。諮詢不收費。</p></details>
     ${field("a_name", "申請人姓名", a.name, { req: true })}
@@ -1120,7 +1128,7 @@ function step1() {
     <label class="f"><span class="req">所屬系所</span><select id="a_dept">${CONFIG.departments.map(d => `<option${d === a.dept ? " selected" : ""}>${esc(d)}</option>`).join("")}</select></label>
     <label class="f"><span class="req">指導教授</span><input id="a_advisor" type="text" list="sponsorList" value="${esc(a.advisor)}" placeholder="例：王玉麟">
       <datalist id="sponsorList">${CONFIG.sponsorAdvisors.map(n => `<option value="${esc(n)}">`).join("")}</datalist>
-      <small id="sponsorHint" class="sponsor-hint">${sponsorHint(a.advisor)}</small></label>
+      <small id="sponsorHint" class="sponsor-hint">${sponsorHint(a.advisor, a.rateGroup)}</small></label>
     ${field("a_email", "Email", a.email, { type: "email", req: true })}
     ${field("a_phone", "聯絡電話", a.phone, { type: "tel" })}
     ${field("a_account", "計畫編號 / 經費來源", a.account, { full: true, ph: "例：NSTC 114-XXXX-E-007-XXX" })}
@@ -1129,9 +1137,10 @@ function step1() {
   <div class="err" id="err" hidden></div>
   <div class="btns"><span></span><button class="b primary" data-act="next">下一步：服務類型</button></div>`;
 }
-function sponsorHint(adv) {
+function sponsorHint(adv, group) {
   const m = sponsorMatch(adv);
-  return m ? `✓ ${esc(m)} 教授為先期贊助教授，自行操作適用 ${money(CONFIG.rates.self.sponsor)} / hr` : "";
+  if (!m || sponsorOf(group) === m) return "";
+  return `${esc(m)} 教授是先期贊助教授，收費身分可選「先期贊助－${esc(m)} 教授」（自行操作 ${money(CONFIG.rates.self.sponsor)} / hr）`;
 }
 function step2() {
   return `<h2>服務類型</h2><p class="hint">尚未通過機台考核者，請選擇「委託代工」或先預約機台訓練。</p>
@@ -1260,7 +1269,8 @@ function validate() {
 function bind() {
   $("#stage").querySelectorAll("input,select,textarea").forEach(el => el.addEventListener("input", () => {
     el.classList.remove("invalid");
-    if (el.id === "a_advisor") { const h = $("#sponsorHint"); if (h) h.innerHTML = sponsorHint(el.value); }
+    if (el.id === "a_rateGroup") { const n = sponsorOf(el.value), ad = $("#a_advisor"); if (n && ad && !ad.value.trim()) ad.value = n + " 教授"; }
+    if (el.id === "a_advisor" || el.id === "a_rateGroup") { const h = $("#sponsorHint"); if (h) h.innerHTML = sponsorHint($("#a_advisor").value, $("#a_rateGroup").value); }
     if (S.step === 3 && (el.id === "o_hours" || el.id === "t_round")) { collect(); const p = $(".pricebar"); if (p) p.outerHTML = priceBar(); }
   }));
   $("#stage").querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", () => { S.mode = r.value; }));
@@ -1286,7 +1296,7 @@ async function pdf() {
   S.pdfBusy = false; render();
 }
 function fillExample() {
-  Object.assign(S.applicant, { rateGroup: "coe", name: "王小明", sid: "112033501", dept: "奈米工程與微系統研究所", advisor: "陳大文 教授", email: "xiaoming@example.com", phone: "0912-345-678", account: "NSTC 114-2221-E-007-000" });
+  Object.assign(S.applicant, { rateGroup: "sponsor:王玉麟", name: "王小明", sid: "112033501", dept: "奈米工程與微系統研究所", advisor: "王玉麟 教授", email: "xiaoming@example.com", phone: "0912-345-678", account: "NSTC 114-2221-E-007-000" });
   S.consult = { topic: "外泌體 (exosome) 粒徑分佈與濃度量測", detail: "樣品為細胞培養上清液經超高速離心純化之外泌體，預計 6 件，溶於 PBS。想確認是否需要先稀釋、建議的濃度範圍，以及每件建議量測幾次。", prefer: "週二、週四下午" };
   S.self = { purpose: "奈米金粒子粒徑分佈量測", samples: "4" };
   render();
