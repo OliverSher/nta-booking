@@ -86,11 +86,36 @@ function initCheckout() {{
 }}
 (function route() {{
   const views = {{ "#admin": ["tplAdmin", initAdmin, "NTA 預約管理"], "#checkout": ["tplCheckout", initCheckout, "NTA 使用簽退"] }};
-  const [tpl, init, title] = views[location.hash] || ["tplUser", initUser, "NTA 機台預約系統"];
-  document.title = title;
-  document.getElementById("app").appendChild(document.getElementById(tpl).content.cloneNode(true));
-  init();
-  window.addEventListener("hashchange", () => location.reload());
+  const docAdd = document.addEventListener.bind(document), docRemove = document.removeEventListener.bind(document);
+  const setInt = window.setInterval.bind(window);
+  let current = null, cleanup = [];
+  // 切換頁面時不重新載入：清掉上一頁註冊的事件與計時器，再掛上新頁
+  function mount(hash) {{
+    const key = views[hash] ? hash : "";
+    if (key === current) return;
+    current = key;
+    cleanup.forEach(f => f()); cleanup = [];
+    const [tpl, init, title] = views[key] || ["tplUser", initUser, "NTA 機台預約系統"];
+    document.title = title;
+    const app = document.getElementById("app");
+    app.innerHTML = "";
+    app.appendChild(document.getElementById(tpl).content.cloneNode(true));
+    document.addEventListener = (t, f, o) => {{ docAdd(t, f, o); cleanup.push(() => docRemove(t, f, o)); }};
+    window.setInterval = (f, ms) => {{ const id = setInt(f, ms); cleanup.push(() => clearInterval(id)); return id; }};
+    try {{ init(); }} finally {{ document.addEventListener = docAdd; window.setInterval = setInt; }}
+    window.scrollTo(0, 0);
+  }}
+  docAdd("click", e => {{
+    const a = e.target.closest && e.target.closest('a[href^="#"]');
+    if (!a) return;
+    e.preventDefault();
+    const h = a.getAttribute("href");
+    try {{ history.pushState(null, "", h === "#" ? location.pathname + location.search : h); }} catch (_) {{ }}
+    mount(h);
+  }}, true);
+  window.addEventListener("hashchange", () => mount(location.hash));
+  window.addEventListener("popstate", () => mount(location.hash));
+  mount(location.hash);
 }})();
 </script>
 </body>
