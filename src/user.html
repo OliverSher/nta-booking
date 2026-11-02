@@ -51,7 +51,7 @@ const S = {
   exam: { records: [0, 1, 2].map(() => ({ trainee: "", trainer: "", date: "", hours: "1" })) },
   self: { purpose: "", samples: "" },
   slots: { training: [], exam: [], use: [] },
-  weekOffset: 1,              // 從下週開始開放預約
+  weekOffset: CONFIG.startWeekOffset,
   slotMap: {}, slotsLoaded: false, slotsError: "",
   submitted: null, submitting: false, submitError: "", pdfBusy: false
 };
@@ -148,7 +148,7 @@ function slotPicker(kind, max, label) {
   if (!S.slotsLoaded) return `<p class="empty">正在載入可預約時段…</p>`;
   const sel = S.slots[kind];
   return `${S.slotsError ? `<p class="err">${esc(S.slotsError)}</p>` : ""}
-  ${calendarHtml({ offset: S.weekOffset, minOffset: 1, maxOffset: CONFIG.weeksAhead, map: S.slotMap, selected: sel })}
+  ${calendarHtml({ offset: S.weekOffset, minOffset: CONFIG.startWeekOffset, maxOffset: CONFIG.weeksAhead, map: S.slotMap, selected: sel })}
   <p class="hint" style="margin:6px 0 0">${label}，最多選 ${max} 格。</p>
   ${sel.length ? `<p class="mono" style="font-size:.82rem;margin:6px 0 0">已選：${sel.slice().sort(slotCmp).map(fmtSlot).join("、")}</p>` : ""}`;
 }

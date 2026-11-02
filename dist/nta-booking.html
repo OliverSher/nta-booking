@@ -44,6 +44,7 @@ const CONFIG = {
   hours: [9, 10, 11, 13, 14, 15, 16],            // 可預約起始時段（避開午休 12:00）
   maxSelfHours: 4,                               // 自行操作單次最多時數
   weeksAhead: 8,                                 // 開放預約幾週內的時段
+  startWeekOffset: 0,                            // 0 = 本週起可預約（已過去的時段不能選）；1 = 下週起才能預約
   departments: ["動力機械工程學系", "奈米工程與微系統研究所", "化學工程學系", "材料科學工程學系", "醫學科學系", "生命科學系", "分析與環境科學研究所", "校外單位", "其他（請於備註說明）"]
 };
 /* ========================================== */
@@ -1060,7 +1061,7 @@ const S = {
   exam: { records: [0, 1, 2].map(() => ({ trainee: "", trainer: "", date: "", hours: "1" })) },
   self: { purpose: "", samples: "" },
   slots: { training: [], exam: [], use: [] },
-  weekOffset: 1,              // 從下週開始開放預約
+  weekOffset: CONFIG.startWeekOffset,
   slotMap: {}, slotsLoaded: false, slotsError: "",
   submitted: null, submitting: false, submitError: "", pdfBusy: false
 };
@@ -1157,7 +1158,7 @@ function slotPicker(kind, max, label) {
   if (!S.slotsLoaded) return `<p class="empty">正在載入可預約時段…</p>`;
   const sel = S.slots[kind];
   return `${S.slotsError ? `<p class="err">${esc(S.slotsError)}</p>` : ""}
-  ${calendarHtml({ offset: S.weekOffset, minOffset: 1, maxOffset: CONFIG.weeksAhead, map: S.slotMap, selected: sel })}
+  ${calendarHtml({ offset: S.weekOffset, minOffset: CONFIG.startWeekOffset, maxOffset: CONFIG.weeksAhead, map: S.slotMap, selected: sel })}
   <p class="hint" style="margin:6px 0 0">${label}，最多選 ${max} 格。</p>
   ${sel.length ? `<p class="mono" style="font-size:.82rem;margin:6px 0 0">已選：${sel.slice().sort(slotCmp).map(fmtSlot).join("、")}</p>` : ""}`;
 }
