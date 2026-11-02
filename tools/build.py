@@ -27,10 +27,11 @@ def build(api_url):
     css = (SRC / "style.css").read_text(encoding="utf-8")
     u_markup, u_js = split_page(SRC / "user.html")
     a_markup, a_js = split_page(SRC / "admin.html")
+    c_markup, c_js = split_page(SRC / "checkout.html")
     u_markup = u_markup.replace('href="admin.html"', 'href="#admin"')
     a_markup = a_markup.replace('href="index.html"', 'href="#"')
     libs = "\n".join((VENDOR / f).read_text(encoding="utf-8") for f in ["html2canvas.min.js", "jspdf.umd.min.js"])
-    for chunk in (libs, u_js, a_js, common):
+    for chunk in (libs, u_js, a_js, c_js, common):
         assert "</script" not in chunk.lower()
 
     return f"""<!doctype html>
@@ -42,6 +43,7 @@ def build(api_url):
 <!--
   NTA 機台預約系統（單一檔案版）
   ・預約頁：直接開啟本檔案
+  ・簽退頁：網址後面加上 #checkout
   ・管理頁：網址後面加上 #admin
   ・設定（資料庫網址、費率、時段）：請修改下方第一段 <script> 裡的 CONFIG
 -->
@@ -63,6 +65,10 @@ def build(api_url):
 {a_markup}
 </template>
 
+<template id="tplCheckout">
+{c_markup}
+</template>
+
 <script>
 /* ===== PDF 元件（html2canvas 1.4.1、jsPDF 2.5.1，MIT 授權）===== */
 {libs}
@@ -75,11 +81,15 @@ function initUser() {{
 function initAdmin() {{
 {a_js}
 }}
+function initCheckout() {{
+{c_js}
+}}
 (function route() {{
-  const admin = location.hash === "#admin";
-  document.title = admin ? "NTA 預約管理" : "NTA 機台預約系統";
-  document.getElementById("app").appendChild(document.getElementById(admin ? "tplAdmin" : "tplUser").content.cloneNode(true));
-  (admin ? initAdmin : initUser)();
+  const views = {{ "#admin": ["tplAdmin", initAdmin, "NTA 預約管理"], "#checkout": ["tplCheckout", initCheckout, "NTA 使用簽退"] }};
+  const [tpl, init, title] = views[location.hash] || ["tplUser", initUser, "NTA 機台預約系統"];
+  document.title = title;
+  document.getElementById("app").appendChild(document.getElementById(tpl).content.cloneNode(true));
+  init();
   window.addEventListener("hashchange", () => location.reload());
 }})();
 </script>

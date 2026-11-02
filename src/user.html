@@ -16,8 +16,9 @@
     <div>
       <div class="tag">Nanoparticle Tracking Analysis</div>
       <h1>NTA 機台預約系統</h1>
-      <p class="sub">四步驟完成申請，送出後可下載申請單（申請人聯、管理人聯、切結書各一頁）</p>
+      <p class="sub">四步驟完成申請，送出後可下載報價單；使用完畢請記得簽退，系統會依實際時間開立繳費單</p>
     </div>
+    <a class="b primary linkbtn" href="#checkout">實驗結束？前往簽退 →</a>
   </header>
 
   <div class="demo-banner" id="demoBanner" hidden>
@@ -71,7 +72,7 @@ function currentKind() {
   return { training: "training", exam: "exam", use: "self" }[S.sub.self];
 }
 function curPrice() {
-  return priceFor(currentKind(), S.applicant.rateGroup, { hours: billHours(), round: S.training.round });
+  return priceFor(currentKind(), billingGroup(S.applicant), { hours: billHours(), round: S.training.round });
 }
 function billHours() {
   const k = currentKind();
@@ -81,7 +82,7 @@ function billHours() {
 }
 function priceBar() {
   const p = curPrice();
-  return `<div class="pricebar"><span>收費身分：<b>${esc(groupLabel(S.applicant.rateGroup))}</b></span>
+  return `<div class="pricebar"><span>收費身分：<b>${esc(billingLabel(S.applicant))}</b></span>
     <span>計價方式：<b class="mono">${money(p.rate)} / ${p.unit}</b>（${esc(p.note)}）</span>
     <span>計費數量：<b class="mono">${p.qty} ${p.unit}</b></span><span>預估費用：<span class="big">${money(p.cost)}</span></span></div>`;
 }
@@ -90,7 +91,7 @@ function buildBooking() {
     consult: { ...S.consult }, service: { ...S.order }, training: { ...S.training },
     exam: { records: S.exam.records.map(r => ({ ...r })) }, self: { ...S.self }
   }[k];
-  const slots = (k === "consult" || k === "service") ? [] : S.slots[S.sub.self].slice().sort();
+  const slots = (k === "consult" || k === "service") ? [] : S.slots[S.sub.self].slice().sort(slotCmp);
   const p = curPrice();
   return { mode: S.mode, kind: k, applicant: { ...S.applicant }, slots, hours: p.qty, unit: p.unit, rate: p.rate, cost: p.cost, priceNote: p.note, details,
     ...(S.submitted ? { id: S.submitted.id, createdAt: S.submitted.createdAt, status: S.submitted.status } : {}) };
@@ -111,12 +112,14 @@ function step1() {
   return `<h2>申請人資料</h2><p class="hint">標 * 為必填。經費來源用於後續請款。</p>
   <div class="grid">
     <label class="f full"><span class="req">收費身分（管理人員會核對）</span><select id="a_rateGroup"><option value="">請選擇</option>${CONFIG.rateGroups.map(g => `<option value="${g.id}"${g.id === a.rateGroup ? " selected" : ""}>${esc(g.label)}</option>`).join("")}</select></label>
-    <details class="full"${a.rateGroup ? "" : " open"}><summary style="cursor:pointer;color:var(--muted);font-size:.85rem">收費標準</summary>${priceTableHtml(a.rateGroup)}
+    <details class="full"${a.rateGroup ? "" : " open"}><summary style="cursor:pointer;color:var(--muted);font-size:.85rem">收費標準</summary>${priceTableHtml(billingGroup(a))}
       <p class="hint" style="margin:6px 0 0">訓練課程按「套」收費，含 3 次訓練與考核，於預約第 1 次訓練時計費。諮詢不收費。</p></details>
     ${field("a_name", "申請人姓名", a.name, { req: true })}
     ${field("a_sid", "學號 / 員工編號", a.sid, { req: true })}
     <label class="f"><span class="req">所屬系所</span><select id="a_dept">${CONFIG.departments.map(d => `<option${d === a.dept ? " selected" : ""}>${esc(d)}</option>`).join("")}</select></label>
-    ${field("a_advisor", "指導教授", a.advisor, { req: true })}
+    <label class="f"><span class="req">指導教授</span><input id="a_advisor" type="text" list="sponsorList" value="${esc(a.advisor)}" placeholder="例：王玉麟">
+      <datalist id="sponsorList">${CONFIG.sponsorAdvisors.map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+      <small id="sponsorHint" class="sponsor-hint">${sponsorHint(a.advisor)}</small></label>
     ${field("a_email", "Email", a.email, { type: "email", req: true })}
     ${field("a_phone", "聯絡電話", a.phone, { type: "tel" })}
     ${field("a_account", "計畫編號 / 經費來源", a.account, { full: true, ph: "例：NSTC 114-XXXX-E-007-XXX" })}
@@ -124,6 +127,10 @@ function step1() {
   </div>
   <div class="err" id="err" hidden></div>
   <div class="btns"><span></span><button class="b primary" data-act="next">下一步：服務類型</button></div>`;
+}
+function sponsorHint(adv) {
+  const m = sponsorMatch(adv);
+  return m ? `✓ ${esc(m)} 教授為先期贊助教授，自行操作適用 ${money(CONFIG.rates.self.sponsor)} / hr` : "";
 }
 function step2() {
   return `<h2>服務類型</h2><p class="hint">尚未通過機台考核者，請選擇「委託代工」或先預約機台訓練。</p>
@@ -142,7 +149,7 @@ function slotPicker(kind, max, label) {
   return `${S.slotsError ? `<p class="err">${esc(S.slotsError)}</p>` : ""}
   ${calendarHtml({ offset: S.weekOffset, minOffset: 1, maxOffset: CONFIG.weeksAhead, map: S.slotMap, selected: sel })}
   <p class="hint" style="margin:6px 0 0">${label}，最多選 ${max} 格。</p>
-  ${sel.length ? `<p class="mono" style="font-size:.82rem;margin:6px 0 0">已選：${sel.slice().sort().map(fmtSlot).join("、")}</p>` : ""}`;
+  ${sel.length ? `<p class="mono" style="font-size:.82rem;margin:6px 0 0">已選：${sel.slice().sort(slotCmp).map(fmtSlot).join("、")}</p>` : ""}`;
 }
 function step3() {
   let body = "";
@@ -189,7 +196,7 @@ function step3() {
       <h3 style="font-size:.95rem;margin:20px 0 4px">選擇考核時段</h3>
       ${slotPicker("exam", 1, "考核 1 小時")}`;
     } else {
-      body += `<p class="hint">限已通過考核者。可選連續或分開的時段。</p>
+      body += `<p class="hint">限已通過考核者。請選同一天的連續時段；費用從第一個時段開始計算到簽退為止，每 ${CONFIG.billUnitMinutes} 分鐘一個計費單位。</p>
       <div class="grid" style="margin-bottom:12px">
         ${field("u_purpose", "量測目的 / 樣品", S.self.purpose, { req: true })}
         ${field("u_samples", "樣品件數", S.self.samples, { type: "number" })}
@@ -203,14 +210,14 @@ function step3() {
 }
 function step4() {
   const done = S.submitted;
-  return `${done ? `<div class="notice ok"><b>已送出預約</b>　申請編號 <span class="mono">${esc(done.id)}</span>，狀態：待管理人員確認。<br>請下載申請單，簽名後將「管理人聯」與「切結書」交給機台管理人員。</div>`
-      : `<h2>確認送出</h2><p class="hint">請確認申請單內容。送出後時段會先保留為「待確認」，管理人員核准後正式鎖定。</p>`}
+  return `${done ? `<div class="notice ok"><b>已送出預約</b>　申請編號 <span class="mono">${esc(done.id)}</span>，狀態：待管理人員確認。<br>確認信已寄到 ${esc(S.applicant.email)}，核准後會再通知你。請下載報價單，簽名後將「管理人聯」與「切結書」交給機台管理人員。${currentKind() === "self" ? `<br>使用完畢請到「<a href="#checkout">簽退</a>」頁面輸入申請編號與 Email 完成簽退，系統會依實際時間開立繳費單。` : ""}</div>`
+      : `<h2>確認送出</h2><p class="hint">請確認報價單內容。送出後時段會先保留為「待確認」，管理人員核准後正式鎖定。</p>`}
   <div id="preview"></div>
   ${S.submitError ? `<p class="err">${esc(S.submitError)}</p>` : ""}
   <div class="btns">
     ${done ? `<button class="b" data-act="restart">新增另一筆預約</button>` : `<button class="b" data-act="prev">返回修改</button>`}
     <div class="right">
-      ${done ? `<button class="b primary" data-act="pdf"${S.pdfBusy ? " disabled" : ""}>${S.pdfBusy ? "產生 PDF 中…" : "下載申請單 PDF"}</button>`
+      ${done ? `<button class="b primary" data-act="pdf"${S.pdfBusy ? " disabled" : ""}>${S.pdfBusy ? "產生 PDF 中…" : "下載報價單 PDF"}</button>`
         : `<button class="b primary" data-act="submit"${S.submitting ? " disabled" : ""}>${S.submitting ? "送出中…" : "送出預約"}</button>`}
     </div>
   </div>`;
@@ -252,6 +259,7 @@ function validate() {
 function bind() {
   $("#stage").querySelectorAll("input,select,textarea").forEach(el => el.addEventListener("input", () => {
     el.classList.remove("invalid");
+    if (el.id === "a_advisor") { const h = $("#sponsorHint"); if (h) h.innerHTML = sponsorHint(el.value); }
     if (S.step === 3 && (el.id === "o_hours" || el.id === "t_round")) { collect(); const p = $(".pricebar"); if (p) p.outerHTML = priceBar(); }
   }));
   $("#stage").querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", () => { S.mode = r.value; }));
@@ -272,7 +280,7 @@ async function submit() {
 }
 async function pdf() {
   S.pdfBusy = true; render();
-  try { await downloadPdf(buildBooking()); }
+  try { await downloadPdf(buildBooking(), "quote"); }
   catch (e) { S.submitError = "PDF 產生失敗：" + e.message; }
   S.pdfBusy = false; render();
 }
@@ -282,6 +290,11 @@ function fillExample() {
   S.self = { purpose: "奈米金粒子粒徑分佈量測", samples: "4" };
   render();
 }
+function contiguous(keys) {
+  const days = new Set(keys.map(k => k.split("|")[0])); if (days.size > 1) return false;
+  const idx = keys.map(k => CONFIG.hours.indexOf(+k.split("|")[1])).sort((a, b) => a - b);
+  return idx.every((v, i) => i === 0 || v === idx[i - 1] + 1);
+}
 document.addEventListener("click", e => {
   const t = e.target.closest("[data-act],[data-tab],[data-slot],#rail li"); if (!t || t.disabled) return;
   if (t.matches("#rail li")) { const n = +t.dataset.s; if (n < S.step && !S.submitted) { collect(); S.step = n; render(); } return; }
@@ -289,8 +302,13 @@ document.addEventListener("click", e => {
   if (t.dataset.slot) {
     collect();
     const kind = S.sub.self, key = t.dataset.slot, arr = S.slots[kind], max = kind === "use" ? CONFIG.maxSelfHours : 1, i = arr.indexOf(key);
-    if (i >= 0) arr.splice(i, 1);
-    else { if (max === 1) arr.length = 0; else if (arr.length >= max) { showErr(`單次最多預約 ${max} 小時`); return; } arr.push(key); }
+    if (i >= 0) { arr.splice(i, 1); if (arr.length && !contiguous(arr)) arr.length = 0; }
+    else {
+      if (max === 1) arr.length = 0;
+      else if (arr.length >= max) { showErr(`單次最多預約 ${max} 小時`); return; }
+      else if (arr.length && !contiguous([...arr, key])) { showErr("同一筆預約請選同一天的連續時段（午休前後可相連）"); return; }
+      arr.push(key);
+    }
     render(); return;
   }
   const a = t.dataset.act; collect();

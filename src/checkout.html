@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>NTA 使用簽退</title>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="tag">Nanoparticle Tracking Analysis · Check-out</div>
+      <h1>NTA 使用簽退</h1>
+      <p class="sub">實驗結束後請在這裡簽退，系統會依實際使用時間開立繳費單</p>
+    </div>
+    <a class="b linkbtn" href="#">← 回到預約頁</a>
+  </header>
+  <div class="demo-banner" id="demoBanner" hidden><span><b>示範模式</b>：尚未設定資料庫網址，只查得到這個瀏覽器送出的預約。</span></div>
+  <main class="card" id="stage"></main>
+  <footer class="foot"><span id="unitName"></span><a href="#admin">管理人員登入</a></footer>
+</div>
+
+<script>
+const C = { id: "", email: "", booking: null, now: null, loading: false, err: "", msg: "", confirm: false, busy: false, pdfBusy: false };
+try { const s = JSON.parse(sessionStorage.getItem("nta_checkout") || "{}"); C.id = s.id || ""; C.email = s.email || ""; } catch (e) { }
+
+async function lookup() {
+  C.loading = true; C.err = ""; render();
+  try {
+    const r = await Api.call("lookup", { id: C.id, email: C.email });
+    C.booking = r.booking; C.now = r.now ? new Date(r.now) : new Date();
+    try { sessionStorage.setItem("nta_checkout", JSON.stringify({ id: C.id, email: C.email })); } catch (e) { }
+  } catch (e) { C.err = e.message; C.booking = null; }
+  C.loading = false; render();
+}
+async function checkout() {
+  C.busy = true; C.err = ""; render();
+  try { const r = await Api.call("checkout", { id: C.id, email: C.email }); C.booking = r.booking; C.msg = "簽退完成，繳費通知已寄到你的 Email。"; }
+  catch (e) { C.err = e.message; }
+  C.busy = false; C.confirm = false; render();
+}
+
+function render() {
+  const b = C.booking;
+  $("#stage").innerHTML = `<h2>查詢預約</h2><p class="hint">請輸入預約時取得的申請編號（例：NTA-20261103-001）與登記的 Email。</p>
+  <form id="lookupForm" class="grid">
+    <label class="f"><span class="req">申請編號</span><input id="c_id" type="text" value="${esc(C.id)}" placeholder="NTA-YYYYMMDD-001" autocomplete="off"></label>
+    <label class="f"><span class="req">Email</span><input id="c_email" type="email" value="${esc(C.email)}"></label>
+    <div class="full"><button class="b primary" type="submit"${C.loading ? " disabled" : ""}>${C.loading ? "查詢中…" : "查詢"}</button></div>
+  </form>
+  ${C.err ? `<p class="err">${esc(C.err)}</p>` : ""}
+  ${b ? detail(b) : ""}`;
+}
+function detail(b) {
+  const a = b.applicant || {}, st = bookingStart(b);
+  const rows = [["申請人", `${a.name}（${a.dept}）`], ["服務類型", RATE_LABEL[b.kind] || b.kind], ["收費身分", billingLabel(a)]];
+  if ((b.slots || []).length) rows.push(["預約時段", b.slots.slice().sort(slotCmp).map(fmtSlot).join("、")]);
+  let body = "";
+  if (b.status === "completed") {
+    const r2 = [["計費起始", b.billStart ? fmtDateTime(b.billStart) : "—"], [b.kind === "self" ? "簽退時間" : "結算日期", fmtDateTime(b.checkoutAt)]];
+    if (b.unit !== "套") r2.push(["計費時間", fmtDuration(b.billMinutes)], ["單價", money(b.billRate) + " / hr"]);
+    body = `${C.msg ? `<div class="notice ok">${esc(C.msg)}</div>` : ""}
+      <dl class="kv">${r2.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}<dt>應繳金額</dt><dd class="bill-big">${money(b.billAmount)}</dd></dl>
+      <div class="btns"><span></span><button class="b primary" data-act="bill"${C.pdfBusy ? " disabled" : ""}>${C.pdfBusy ? "產生中…" : "下載繳費單 PDF"}</button></div>`;
+  } else if (b.status === "pending") body = `<p class="hint">這筆預約還在等管理人員核准，核准後才能簽退。</p>`;
+  else if (b.status === "rejected" || b.status === "cancelled") body = `<p class="err">這筆預約${STATUS_LABEL[b.status]}${b.adminNote ? "：" + esc(b.adminNote) : ""}。</p>`;
+  else if (b.kind !== "self") body = `<p class="hint">「${esc(RATE_LABEL[b.kind])}」由管理人員結算，不需要自行簽退。結算完成後會寄繳費通知到你的 Email。</p>`;
+  else if (C.now < st) body = `<p class="hint">預約時段在 ${fmtDateTime(st.toISOString())} 開始，開始之後才能簽退。</p>`;
+  else {
+    let est; try { est = settle(b, { end: new Date().toISOString() }); } catch (e) { est = null; }
+    body = `<dl class="kv"><dt>計費起始</dt><dd>${fmtDateTime(st.toISOString())}（預約開始時間）</dd>
+        ${est ? `<dt>若現在簽退</dt><dd>${fmtDuration(est.billMinutes)}，約 <b>${money(est.billAmount)}</b></dd>` : ""}</dl>
+      <p class="hint" style="margin-top:10px">每 ${CONFIG.billUnitMinutes} 分鐘一個計費單位，不足一單位以一單位計。簽退時間以伺服器收到的時間為準，送出後無法修改。</p>
+      <div class="btns"><span></span><div class="right">
+        ${C.confirm ? `<button class="b ghost" data-act="unconfirm">取消</button><button class="b ok" data-act="checkout"${C.busy ? " disabled" : ""}>${C.busy ? "簽退中…" : "確定簽退"}</button>`
+          : `<button class="b primary" data-act="ask">簽退</button>`}</div></div>`;
+  }
+  return `<article class="bitem ${b.status}" style="margin-top:18px">
+    <div class="bhead"><span class="pill ${b.status}">${STATUS_LABEL[b.status] || b.status}</span><span class="who mono">${esc(b.id)}</span></div>
+    <dl class="kv" style="margin:10px 0 12px">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>${body}</article>`;
+}
+
+document.addEventListener("submit", e => {
+  if (e.target.id !== "lookupForm") return;
+  e.preventDefault(); C.id = $("#c_id").value.trim().toUpperCase(); C.email = $("#c_email").value.trim(); C.msg = "";
+  if (!C.id || !C.email) { C.err = "請輸入申請編號與 Email"; render(); return; }
+  lookup();
+});
+document.addEventListener("click", async e => {
+  const t = e.target.closest("[data-act]"); if (!t || t.disabled) return;
+  const a = t.dataset.act;
+  if (a === "ask") { C.confirm = true; render(); }
+  if (a === "unconfirm") { C.confirm = false; render(); }
+  if (a === "checkout") checkout();
+  if (a === "bill") { C.pdfBusy = true; render(); try { await downloadPdf(C.booking, "bill"); } catch (err) { C.err = "PDF 產生失敗：" + err.message; } C.pdfBusy = false; render(); }
+});
+setInterval(() => { const b = C.booking; if (b && b.status === "approved" && b.kind === "self" && !C.confirm && !C.busy) { C.now = new Date(); render(); } }, 30000);
+
+$("#demoBanner").hidden = !DEMO;
+$("#unitName").textContent = CONFIG.unit;
+render();
+if (C.id && C.email) lookup();
+</script>
+</body>
+</html>

@@ -167,3 +167,13 @@ button.b.ghost{border-color:transparent;color:var(--muted);padding-inline:8px}
 .pricetable th{white-space:nowrap}
 .pricetable td.mono{text-align:right;padding-right:14px}
 .pricetable tr.hl td{background:var(--accent-soft);font-weight:700}
+.linkbtn{text-decoration:none;display:inline-block;align-self:center}
+.sponsor-hint{color:var(--ok);font-size:.8rem;min-height:1em}
+.bill-big{font-family:var(--f-mono);font-size:1.6rem;font-weight:500}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;font-size:.92rem;margin:0}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.settle{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;padding:8px 10px;border:1px dashed var(--line);border-radius:6px;font-size:.84rem}
+.settle input{max-width:200px;padding:5px 8px;font-size:.84rem}
+.pill.completed{background:var(--accent-soft);color:var(--accent)}
+.bitem.completed{border-left:4px solid var(--accent)}

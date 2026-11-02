@@ -44,8 +44,8 @@ async function act(action, payload, okMsg) {
 }
 function adminSlotMap() {
   const m = {}; if (!A.data) return m;
-  for (const b of A.data.bookings) if (b.status === "pending" || b.status === "approved")
-    for (const s of b.slots || []) m[s] = { state: b.status === "approved" ? "booked" : "pending", id: b.id };
+  for (const b of A.data.bookings) if (["pending", "approved", "completed"].includes(b.status))
+    for (const s of b.slots || []) m[s] = { state: b.status === "pending" ? "pending" : "booked", id: b.id };
   for (const [k, v] of Object.entries(A.data.locks || {})) m[k] = { state: "locked", reason: v.reason || "" };
   return m;
 }
@@ -73,7 +73,7 @@ function mainView() {
   return tabsH + msg + (A.tab === "list" ? listView(bs, cnt) : calView());
 }
 function listView(bs, cnt) {
-  const filters = [["pending", "待確認"], ["approved", "已核准"], ["rejected", "已退回"], ["cancelled", "已取消"], ["all", "全部"]];
+  const filters = [["pending", "待確認"], ["approved", "已核准"], ["completed", "已結算"], ["rejected", "已退回"], ["cancelled", "已取消"], ["all", "全部"]];
   const shown = bs.filter(b => A.filter === "all" || b.status === A.filter);
   return `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">${filters.map(([k, l]) => `<button class="b sm${A.filter === k ? " primary" : ""}" data-filter="${k}">${l}（${cnt(k)}）</button>`).join("")}</div>
   <div class="blist">${shown.length ? shown.map(bookingCard).join("") : `<p class="empty">目前沒有${filters.find(f => f[0] === A.filter)[1]}的預約</p>`}</div>`;
@@ -94,19 +94,35 @@ function bookingCard(b) {
   const actions = [];
   if (b.status === "pending") actions.push(`<button class="b sm ok" data-do="approved" data-id="${b.id}">核准並鎖定時段</button>`, btn("rejected", "退回", "danger"));
   if (b.status === "approved") actions.push(btn("cancelled", "取消預約", "danger"));
+  if (b.status === "completed") actions.push(btn("approved", "取消結算（改回已核准）", ""), `<button class="b sm primary" data-bill="${b.id}"${A.busyId === b.id + "b" ? " disabled" : ""}>${A.busyId === b.id + "b" ? "產生中…" : "下載繳費單"}</button>`);
   if (b.status === "rejected" || b.status === "cancelled") actions.push(`<button class="b sm" data-do="pending" data-id="${b.id}">改回待確認</button>`);
   return `<article class="bitem ${b.status}" id="b-${esc(b.id)}">
     <div class="bhead"><span class="pill ${b.status}">${STATUS_LABEL[b.status] || b.status}</span><span class="who">${esc(a.name)}</span>
       <span>${esc(RATE_LABEL[b.kind] || b.kind)}</span><span class="mono" style="font-size:.8rem">${esc(b.id)}</span><span style="flex:1"></span><span class="mono">${money(b.cost)}</span></div>
-    <div class="bmeta">收費身分：${esc(groupLabel(a.rateGroup))}　·　${money(b.rate)} / ${esc(b.unit || "hr")} × ${esc(b.hours)}${b.priceNote ? "（" + esc(b.priceNote) + "）" : ""}</div>
+    <div class="bmeta">收費身分：${esc(billingLabel(a))}　·　${money(b.rate)} / ${esc(b.unit || "hr")} × ${esc(b.hours)}${b.priceNote ? "（" + esc(b.priceNote) + "）" : ""}</div>
     <div class="bmeta">${esc(a.dept)}　·　指導教授 ${esc(a.advisor)}　·　學號 ${esc(a.sid)}　·　送出 ${esc(fmtDateTime(b.createdAt))}</div>
-    ${(b.slots || []).length ? `<div class="bslots">${b.slots.map(fmtSlot).join("　")}</div>` : ""}
+    ${(b.slots || []).length ? `<div class="bslots">${b.slots.slice().sort(slotCmp).map(fmtSlot).join("　")}</div>` : ""}
+    ${b.status === "completed" ? `<div class="bmeta" style="color:var(--ink)">結算：${b.unit === "套" ? "訓練課程（按套）" : fmtDuration(b.billMinutes) + " × " + money(b.billRate) + "/hr"}　·　應繳 <b>${money(b.billAmount)}</b>　·　${b.kind === "self" ? "簽退" : "結算"} ${esc(fmtDateTime(b.checkoutAt))}${b.settledBy === "admin" ? "（管理人員登錄）" : ""}</div>` : ""}
+    ${b.status === "approved" ? settleForm(b) : ""}
     <details class="bdetail"><summary style="cursor:pointer;color:var(--muted)">詳細內容</summary><dl style="margin-top:6px">${det.filter(x => x[1]).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl></details>
     ${b.adminNote ? `<div class="bmeta">管理備註：${esc(b.adminNote)}</div>` : ""}
     <div class="bactions">${actions.join("")}
       <input type="text" id="note-${esc(b.id)}" placeholder="管理備註（選填，會一起儲存）" value="${esc(b.adminNote || "")}">
-      <button class="b ghost sm" data-pdf="${b.id}"${A.busyId === b.id ? " disabled" : ""}>${A.busyId === b.id ? "產生中…" : "下載申請單"}</button></div>
+      <button class="b ghost sm" data-pdf="${b.id}"${A.busyId === b.id ? " disabled" : ""}>${A.busyId === b.id ? "產生中…" : "下載報價單"}</button></div>
   </article>`;
+}
+function localInput(d) { const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
+function settleForm(b) {
+  const id = esc(b.id);
+  if (b.kind === "self") {
+    const st = bookingStart(b), def = st && new Date() > st ? new Date() : new Date(st.getTime() + (b.slots || []).length * 3600e3);
+    return `<div class="settle"><b>代為簽退</b><label>簽退時間 <input type="datetime-local" id="end-${id}" value="${localInput(def)}"></label>
+      <button class="b sm ok" data-settle="${id}">結算並開立繳費單</button><span class="hint" style="margin:0">申請人忘記簽退時使用</span></div>`;
+  }
+  if (b.kind === "service") return `<div class="settle"><b>結算</b><label>實際量測時間（分鐘）<input type="number" id="min-${id}" min="${CONFIG.billUnitMinutes}" step="${CONFIG.billUnitMinutes}" value="${(Number(b.hours) || 1) * 60}"></label>
+      <button class="b sm ok" data-settle="${id}">結算並開立繳費單</button></div>`;
+  return `<div class="settle"><b>結算</b><span>${b.cost ? money(b.cost) + "（" + esc(b.priceNote || "") + "）" : "不收費（" + esc(b.priceNote || "") + "）"}</span>
+      <button class="b sm ok" data-settle="${id}">標記完成${b.cost ? "並開立繳費單" : ""}</button></div>`;
 }
 function calView() {
   const map = adminSlotMap(), focus = A.focusId && A.data.bookings.find(b => b.id === A.focusId);
@@ -122,7 +138,7 @@ document.addEventListener("submit", e => {
 });
 document.addEventListener("input", e => { if (e.target.id === "lockReason") A.lockReason = e.target.value; });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-act],[data-tab],[data-filter],[data-do],[data-ask],[data-slot],[data-day],[data-pdf]");
+  const t = e.target.closest("[data-act],[data-tab],[data-filter],[data-do],[data-ask],[data-slot],[data-day],[data-pdf],[data-bill],[data-settle]");
   if (!t || t.disabled) return;
   A.msg = ""; A.err = "";
   if (t.dataset.tab) { A.tab = t.dataset.tab; render(); return; }
@@ -139,8 +155,20 @@ document.addEventListener("click", async e => {
   }
   if (t.dataset.pdf) {
     A.busyId = t.dataset.pdf; render();
-    try { await downloadPdf(A.data.bookings.find(b => b.id === A.busyId)); } catch (err) { A.err = "PDF 產生失敗：" + err.message; }
+    try { await downloadPdf(A.data.bookings.find(b => b.id === A.busyId), "quote"); } catch (err) { A.err = "PDF 產生失敗：" + err.message; }
     A.busyId = ""; render(); return;
+  }
+  if (t.dataset.bill) {
+    const id = t.dataset.bill; A.busyId = id + "b"; render();
+    try { await downloadPdf(A.data.bookings.find(b => b.id === id), "bill"); } catch (err) { A.err = "PDF 產生失敗：" + err.message; }
+    A.busyId = ""; render(); return;
+  }
+  if (t.dataset.settle) {
+    const id = t.dataset.settle, b = A.data.bookings.find(x => x.id === id), note = (document.getElementById("note-" + id) || {}).value;
+    const payload = { id, note };
+    if (b.kind === "self") { const v = (document.getElementById("end-" + id) || {}).value; if (!v) { A.err = "請輸入簽退時間"; render(); return; } payload.end = new Date(v).toISOString(); }
+    if (b.kind === "service") { const m = Number((document.getElementById("min-" + id) || {}).value); if (!(m > 0)) { A.err = "請輸入實際量測分鐘數"; render(); return; } payload.minutes = m; }
+    act("admin_complete", payload, `${id} 已結算，繳費通知已寄給申請人`); return;
   }
   if (t.dataset.slot) {
     const key = t.dataset.slot, info = adminSlotMap()[key];

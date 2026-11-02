@@ -12,7 +12,6 @@ const CONFIG = {
   instrument: "奈米粒子追蹤分析儀 (NTA)",
   // 收費身分（申請人於第一步選擇，管理人員核對）
   rateGroups: [
-    { id: "sponsor",  label: "清大先期贊助" },
     { id: "coe",      label: "清大工學院" },
     { id: "nthu",     label: "清大（工學院以外）" },
     { id: "academic", label: "學界（校外學術單位）" },
@@ -24,6 +23,10 @@ const CONFIG = {
     service:  { sponsor: 750,  coe: 750,  nthu: 750,  academic: 1000, industry: 1750 },  // 代工量測，元/hr
     training: { sponsor: 3000, coe: 3000, nthu: 3000, academic: 3000, industry: 5000 }   // 訓練課程（訓練＋考核），元/套
   },
+  // 先期贊助（配合款）教授：指導教授在名單上的學生自動適用 rates 裡的 sponsor 價格
+  sponsorAdvisors: ["陳玉彬", "李明蒼", "黃振煌", "黃郁棻", "林幸瑩", "魯才德", "蔡德豪", "陳之碩", "王玉麟"],
+  billUnitMinutes: 15,                           // 簽退計費單位（分鐘），不足一單位以一單位計
+  paymentNote: "請於收到繳費單後依機台管理單位指示完成繳費；校內計畫經費請辦理經費轉帳。",  // 繳費單上的繳費說明
   hours: [9, 10, 11, 13, 14, 15, 16],            // 可預約起始時段（避開午休 12:00）
   maxSelfHours: 4,                               // 自行操作單次最多時數
   weeksAhead: 8,                                 // 開放預約幾週內的時段
@@ -35,7 +38,18 @@ const DEMO = !CONFIG.apiUrl;
 const DEMO_ADMIN_KEY = "demo";
 
 const RATE_LABEL = { consult: "預約諮詢", service: "委託代工", training: "機台訓練", exam: "機台考核", self: "自行操作" };
-const groupLabel = id => (CONFIG.rateGroups.find(g => g.id === id) || {}).label || "—";
+const groupLabel = id => id === "sponsor" ? "先期贊助" : ((CONFIG.rateGroups.find(g => g.id === id) || {}).label || "—");
+
+/* 先期贊助：指導教授姓名比對名單（忽略空白與「教授／老師」等稱謂） */
+function sponsorMatch(advisor) {
+  const n = String(advisor || "").replace(/\s|教授|老師|博士/g, "");
+  return n ? (CONFIG.sponsorAdvisors.find(x => n.includes(x)) || "") : "";
+}
+function billingGroup(a) { return sponsorMatch((a || {}).advisor) ? "sponsor" : (a || {}).rateGroup; }
+function billingLabel(a) {
+  const m = sponsorMatch((a || {}).advisor);
+  return m ? `先期贊助（指導教授 ${m}）` : groupLabel((a || {}).rateGroup);
+}
 
 /* 計價：回傳 {rate, unit, qty, cost, note}
    ・訓練課程按「套」收費（含 3 次訓練＋考核），於預約第 1 次訓練時計費；第 2、3 次訓練與考核不另收費 */
@@ -50,10 +64,12 @@ function priceFor(kind, group, { hours = 0, round = "1" } = {}) {
 }
 function priceTableHtml(highlight) {
   const R = CONFIG.rates, c = n => n.toLocaleString("zh-TW");
+  const groups = [{ id: "sponsor", label: "先期贊助教授之學生" }, ...CONFIG.rateGroups];
   return `<div class="rec-scroll"><table class="rec pricetable"><tr><th>收費身分</th><th>自行操作<br>元/hr</th><th>代工量測<br>元/hr</th><th>訓練課程（訓練＋考核）<br>元/套</th></tr>
-    ${CONFIG.rateGroups.map(g => `<tr${g.id === highlight ? ' class="hl"' : ""}><td>${esc(g.label)}</td><td class="mono">${c(R.self[g.id])}</td><td class="mono">${c(R.service[g.id])}</td><td class="mono">${c(R.training[g.id])}</td></tr>`).join("")}</table></div>`;
+    ${groups.map(g => `<tr${g.id === highlight ? ' class="hl"' : ""}><td>${esc(g.label)}</td><td class="mono">${c(R.self[g.id])}</td><td class="mono">${c(R.service[g.id])}</td><td class="mono">${c(R.training[g.id])}</td></tr>`).join("")}</table></div>
+    <p class="hint" style="margin:6px 0 0">先期贊助教授：${CONFIG.sponsorAdvisors.map(esc).join("、")}。指導教授在名單上會自動套用。</p>`;
 }
-const STATUS_LABEL = { pending: "待確認", approved: "已核准", rejected: "已退回", cancelled: "已取消" };
+const STATUS_LABEL = { pending: "待確認", approved: "已核准", completed: "已結算", rejected: "已退回", cancelled: "已取消" };
 const WD = ["一", "二", "三", "四", "五"];
 
 const $ = s => document.querySelector(s);
@@ -65,6 +81,22 @@ const H = h => ({ h });   // 標記「已處理好的 HTML」
 function mondayOf(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - (x.getDay() + 6) % 7); return x; }
 function ymd(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
 function weekDays(offset) { const m = mondayOf(new Date()); m.setDate(m.getDate() + 7 * offset); return [0, 1, 2, 3, 4].map(i => { const d = new Date(m); d.setDate(m.getDate() + i); return d; }); }
+function slotStartDate(k) { const [d, h] = k.split("|"); return new Date(`${d}T${String(h).padStart(2, "0")}:00:00+08:00`); }
+const slotCmp = (a, b) => slotStartDate(a) - slotStartDate(b);
+function bookingStart(b) { const s = (b.slots || []).slice().sort(slotCmp)[0]; return s ? slotStartDate(s) : null; }
+function fmtDuration(min) { min = Math.round(min); const h = Math.floor(min / 60), m = min % 60; return [h ? h + " 小時" : "", m ? m + " 分鐘" : ""].filter(Boolean).join(" ") || "0 分鐘"; }
+/* 結算：自行操作＝預約開始→簽退；代工＝管理人員輸入的分鐘數；訓練＝按套 */
+function settle(b, { end, minutes, rate } = {}) {
+  const U = CONFIG.billUnitMinutes, r = rate != null && rate !== "" ? Number(rate) : Number(b.rate || 0);
+  const endAt = end ? new Date(end) : new Date();
+  if (b.unit === "套" || b.kind === "consult") return { checkoutAt: endAt.toISOString(), billStart: "", billMinutes: 0, billRate: r, billAmount: b.kind === "consult" ? 0 : Number(b.cost || 0) };
+  let mins, start = "";
+  if (minutes != null && minutes !== "") mins = Number(minutes);
+  else { const st = bookingStart(b); if (!st) throw new Error("這筆預約沒有時段，請輸入實際分鐘數"); start = st.toISOString(); mins = (endAt - st) / 60000; }
+  if (!(mins > 0)) throw new Error("簽退時間必須晚於預約開始時間");
+  const billMinutes = Math.ceil(mins / U) * U;
+  return { checkoutAt: endAt.toISOString(), billStart: start, billMinutes, billRate: r, billAmount: Math.round(r * billMinutes / 60) };
+}
 function fmtSlot(k) { const [d, h] = k.split("|"); return `${d} ${String(h).padStart(2, "0")}:00–${String(+h + 1).padStart(2, "0")}:00`; }
 function slotIsPast(k) { const [d, h] = k.split("|"); const t = new Date(d + "T00:00:00"); t.setHours(+h); return t < new Date(); }
 function fmtDateTime(iso) { if (!iso) return ""; const d = new Date(iso); return isNaN(d) ? String(iso) : ymd(d) + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
@@ -78,8 +110,8 @@ const LocalDB = {
   save(db) { this._mem = db; try { localStorage.setItem(this.KEY, JSON.stringify(db)); } catch (e) { } },
   slotMap(db) {
     const m = {};
-    for (const b of db.bookings) if (b.status === "pending" || b.status === "approved")
-      for (const s of b.slots || []) m[s] = { state: b.status === "approved" ? "booked" : "pending", id: b.id };
+    for (const b of db.bookings) if (["pending", "approved", "completed"].includes(b.status))
+      for (const s of b.slots || []) m[s] = { state: b.status === "pending" ? "pending" : "booked", id: b.id };
     for (const [k, v] of Object.entries(db.locks)) m[k] = { state: "locked", reason: v.reason || "" };
     return m;
   },
@@ -97,7 +129,29 @@ const LocalDB = {
       const b = { ...d.booking, id: this.newId(db.bookings.map(x => x.id)), createdAt: new Date().toISOString(), status: "pending", adminNote: "" };
       db.bookings.push(b); this.save(db); return { id: b.id, status: b.status, createdAt: b.createdAt };
     }
+    const find = () => {
+      const b = db.bookings.find(x => x.id === String(d.id || "").trim().toUpperCase());
+      if (!b || String((b.applicant || {}).email || "").toLowerCase() !== String(d.email || "").trim().toLowerCase()) throw new Error("找不到這筆預約，請確認申請編號與 Email");
+      return b;
+    };
+    if (action === "lookup") return { booking: find(), now: new Date().toISOString() };
+    if (action === "checkout") {
+      const b = find();
+      if (b.status === "completed") throw new Error("這筆預約已經簽退結算過了");
+      if (b.status !== "approved") throw new Error("預約尚未核准，無法簽退");
+      if (b.kind !== "self") throw new Error("此類預約由管理人員結算，不需簽退");
+      const st = bookingStart(b), now = new Date();
+      if (now < st) throw new Error("預約時段尚未開始，無法簽退");
+      if (now - st > 24 * 3600e3) throw new Error("已超過可簽退時間，請聯絡機台管理人員補登");
+      Object.assign(b, settle(b, { end: now.toISOString() }), { status: "completed", settledBy: "user" }); this.save(db);
+      return { booking: b };
+    }
     if (action.startsWith("admin_") && d.key !== DEMO_ADMIN_KEY) throw new Error("管理密碼錯誤");
+    if (action === "admin_complete") {
+      const b = db.bookings.find(x => x.id === d.id); if (!b) throw new Error("找不到這筆預約");
+      Object.assign(b, settle(b, { end: d.end, minutes: d.minutes, rate: d.rate }), { status: "completed", settledBy: "admin" });
+      if (d.note != null) b.adminNote = d.note; this.save(db); return { ok: true };
+    }
     if (action === "admin_list") return { bookings: db.bookings.slice().reverse(), locks: db.locks };
     if (action === "admin_status") {
       const b = db.bookings.find(x => x.id === d.id); if (!b) throw new Error("找不到這筆預約");
@@ -161,11 +215,13 @@ function detailRows(b) {
   if (k === "training") rows.push(["訓練次別", `第 ${d.round} 次（共 3 次）`]);
   if (k === "exam") rows.push(["訓練紀錄", H(`<table class="pt inner"><tr><th>#</th><th>受訓人</th><th>訓練人</th><th>受訓日期</th><th>時數</th></tr>${(d.records || []).map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.trainee)}</td><td>${esc(r.trainer)}</td><td>${esc(r.date)}</td><td>${esc(r.hours)}</td></tr>`).join("")}</table>`)]);
   if (k === "self") rows.push(["量測目的／樣品", `${d.purpose}（${d.samples || "—"} 件）`]);
-  if ((b.slots || []).length) rows.push(["預約時段", H(b.slots.slice().sort().map(fmtSlot).join("<br>"))]);
+  if ((b.slots || []).length) rows.push(["預約時段", H(b.slots.slice().sort(slotCmp).map(fmtSlot).join("<br>"))]);
   const unit = b.unit || "hr", note = b.priceNote ? `（${esc(b.priceNote)}）` : "";
-  rows.push(["收費身分", groupLabel((b.applicant || {}).rateGroup)],
+  rows.push(["收費身分", billingLabel(b.applicant)],
     ["計價方式", H(`${money(b.rate)} / ${unit}${note}`)],
-    ["計費數量／預估費用", H(`${b.hours} ${unit}　／　<b>${money(b.cost)}</b>`)]);
+    ["預估數量／報價金額", H(`${b.hours} ${unit}　／　<b>${money(b.cost)}</b>`)]);
+  if (k === "self") rows.push(["計費說明", `實際費用依「預約開始時間」至「簽退時間」計算，每 ${CONFIG.billUnitMinutes} 分鐘為一計費單位，不足一單位以一單位計，以繳費單為準。`]);
+  if (k === "service") rows.push(["計費說明", `實際費用依實際量測時間計算，每 ${CONFIG.billUnitMinutes} 分鐘為一計費單位，以繳費單為準。`]);
   return rows;
 }
 function ptable(rows) { return `<table class="pt">${rows.map(([k, v]) => `<tr><th>${k}</th><td>${v && v.h !== undefined ? v.h : esc(v).replace(/\n/g, "<br>")}</td></tr>`).join("")}</table>`; }
@@ -181,7 +237,7 @@ const SIGS = `<div class="sigs">${["申請人簽名", "指導教授簽名", "機
 
 function reportPages(b) {
   const id = b.id || "（送出後產生）", date = b.createdAt ? ymd(new Date(b.createdAt)) : ymd(new Date());
-  const head = (label) => `<h1 class="ptitle">${esc(CONFIG.instrument)} 預約申請單</h1><div class="copy">【 ${label} 】</div>
+  const head = (label) => `<h1 class="ptitle">${esc(CONFIG.instrument)} 預約報價單</h1><div class="copy">【 ${label} 】</div>
     <div class="meta"><span>申請編號：${esc(id)}</span><span>申請日期：${date}</span><span>${esc(CONFIG.unit)}</span></div>`;
   const foot = (n, label) => `<div class="pfoot"><span>${esc(CONFIG.unit)}</span><span>${esc(id)}　·　${label}　·　第 ${n} 頁／共 3 頁</span></div>`;
   const copy = (n, label, extra) => `<div class="a4"><div class="fit">${head(label)}
@@ -190,7 +246,7 @@ function reportPages(b) {
       <h4>三、簽章</h4>${SIGS}${extra || ""}</div>${foot(n, label)}</div>`;
   const office = `<div class="office"><b>管理單位填寫</b><div class="row" style="margin-top:6px">
       <span>收件日期：＿＿＿＿＿＿＿＿</span><span>審核結果：□ 核准　□ 退回</span>
-      <span>實收金額：NT$ ＿＿＿＿＿＿</span><span>經手人：＿＿＿＿＿＿＿＿</span></div></div>`;
+      <span>經手人：＿＿＿＿＿＿＿＿</span><span>備註：＿＿＿＿＿＿＿＿＿＿</span></div></div>`;
   const selfOp = b.mode === "self", a = b.applicant || {};
   const affidavit = `<div class="a4${selfOp ? "" : " na"}"><div class="fit">
       <h1 class="ptitle keep">機台使用切結書</h1>
@@ -199,7 +255,7 @@ function reportPages(b) {
       ${selfOp ? "" : `<div class="na-banner keep">本次申請為「委託代工」，免填本切結書</div>`}
       <table class="pt" style="margin-top:6px"><tr><th>立切結書人</th><td>${esc(a.name)}</td><th>學號／員編</th><td>${esc(a.sid)}</td></tr>
         <tr><th>所屬系所</th><td>${esc(a.dept)}</td><th>指導教授</th><td>${esc(a.advisor)}</td></tr>
-        <tr><th>使用項目</th><td colspan="3">${esc(RATE_LABEL[b.kind])}${(b.slots || []).length ? "　共 " + b.slots.length + " 小時（" + esc(b.slots.slice().sort()[0].split("|")[0]) + " 起）" : ""}</td></tr></table>
+        <tr><th>使用項目</th><td colspan="3">${esc(RATE_LABEL[b.kind])}${(b.slots || []).length ? "　共 " + b.slots.length + " 小時（" + esc(b.slots.slice().sort(slotCmp)[0].split("|")[0]) + " 起）" : ""}</td></tr></table>
       <p style="margin-top:14px">立切結書人（以下稱申請人）向${esc(CONFIG.unit)}申請自行操作${esc(CONFIG.instrument)}，茲聲明並同意遵守下列事項：</p>
       <ol class="terms">
         <li>申請人已接受機台操作訓練並通過考核，將依標準作業程序（SOP）及管理人員指示操作，不擅自變更儀器設定、拆卸零組件，或使用未經核准之樣品與溶劑。</li>
@@ -214,6 +270,34 @@ function reportPages(b) {
       <p style="text-align:center;margin-top:22px;letter-spacing:.3em">中　華　民　國　　　　年　　　　月　　　　日</p>
     </div>${foot(3, "切結書")}</div>`;
   return [copy(1, "申請人聯"), copy(2, "管理人聯", office), affidavit];
+}
+
+/* 繳費單：簽退／結算後產生，兩頁（申請人聯／管理單位聯） */
+function billPages(b) {
+  const id = b.id || "", a = b.applicant || {}, unit = b.unit || "hr";
+  const usage = [["服務類型", (b.mode === "service" ? "委託代工" : "自行操作") + "　—　" + RATE_LABEL[b.kind]]];
+  if ((b.slots || []).length) usage.push(["預約時段", H(b.slots.slice().sort(slotCmp).map(fmtSlot).join("<br>"))]);
+  if (b.billStart) usage.push(["計費起始（預約開始）", fmtDateTime(b.billStart)]);
+  if (b.kind === "self") usage.push(["簽退時間", fmtDateTime(b.checkoutAt) + (b.settledBy === "admin" ? "（管理人員登錄）" : "")]);
+  else usage.push(["結算日期", fmtDateTime(b.checkoutAt)]);
+  usage.push(["收費身分", billingLabel(a)]);
+  if (unit === "套") usage.push(["計費方式", `${money(b.billRate)} / 套（${esc(b.priceNote || "訓練課程")}）`]);
+  else usage.push(["計費時間", `${fmtDuration(b.billMinutes)}（${b.billMinutes / CONFIG.billUnitMinutes} 單位 × ${CONFIG.billUnitMinutes} 分鐘）`],
+    ["單價", `${money(b.billRate)} / hr`]);
+  usage.push(["應繳金額", H(`<b style="font-size:16px">${money(b.billAmount)}</b>`)]);
+  if (b.adminNote) usage.push(["備註", b.adminNote]);
+  const page = (n, label, extra) => `<div class="a4"><div class="fit">
+      <h1 class="ptitle">${esc(CONFIG.instrument)} 使用繳費單</h1><div class="copy">【 ${label} 】</div>
+      <div class="meta"><span>申請編號：${esc(id)}</span><span>開立日期：${ymd(new Date(b.checkoutAt || Date.now()))}</span><span>${esc(CONFIG.unit)}</span></div>
+      <h4>一、申請人基本資料</h4>${applicantTable(a)}
+      <h4>二、使用紀錄與費用</h4>${ptable(usage)}
+      <h4>三、繳費說明</h4><p style="margin:0 0 6px">${esc(CONFIG.paymentNote)}</p>
+      <h4>四、簽章</h4>${SIGS}${extra || ""}</div>
+      <div class="pfoot"><span>${esc(CONFIG.unit)}</span><span>${esc(id)}　·　繳費單 ${label}　·　第 ${n} 頁／共 2 頁</span></div></div>`;
+  const office = `<div class="office"><b>管理單位填寫</b><div class="row" style="margin-top:6px">
+      <span>收款日期：＿＿＿＿＿＿＿＿</span><span>收據編號：＿＿＿＿＿＿＿＿</span>
+      <span>實收金額：NT$ ＿＿＿＿＿＿</span><span>經手人：＿＿＿＿＿＿＿＿</span></div></div>`;
+  return [page(1, "申請人聯"), page(2, "管理單位聯", office)];
 }
 const reportPagesHtml = b => reportPages(b).join("");
 
@@ -244,13 +328,13 @@ function mountPreview(container, b) {
   if (document.fonts) document.fonts.ready.then(() => fitPages(pages));
 }
 
-/* 下載 PDF（3 頁 A4） */
-async function downloadPdf(b) {
+/* 下載 PDF：type = "quote"（報價單 3 頁）或 "bill"（繳費單 2 頁） */
+async function downloadPdf(b, type = "quote") {
   if (!window.html2canvas || !window.jspdf) throw new Error("PDF 元件載入失敗，請檢查網路後重新整理");
   const host = document.createElement("div");
   host.id = "pdfhost";
   host.style.cssText = "position:absolute;left:0;top:0;width:794px;visibility:hidden;pointer-events:none;z-index:-1";
-  host.innerHTML = reportPagesHtml(b);
+  host.innerHTML = (type === "bill" ? billPages(b) : reportPages(b)).join("");
   document.body.appendChild(host);
   try {
     if (document.fonts) await document.fonts.ready;
@@ -265,6 +349,6 @@ async function downloadPdf(b) {
       if (i) pdf.addPage();
       pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, 210, 297);
     }
-    pdf.save(`NTA預約申請單_${b.id || "草稿"}_${(b.applicant || {}).name || ""}.pdf`);
+    pdf.save(`NTA${type === "bill" ? "繳費單" : "報價單"}_${b.id || "草稿"}_${(b.applicant || {}).name || ""}.pdf`);
   } finally { host.remove(); }
 }
