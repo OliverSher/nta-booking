@@ -37,6 +37,7 @@ function handle(p) {
       case 'slots': return out({ slots: publicSlots() });
       case 'book': return out(book(p.booking));
       case 'lookup': return out({ booking: findForUser(p.id, p.email).b, now: new Date().toISOString() });
+      case 'lookup_email': return out({ bookings: listForEmail(p.email), now: new Date().toISOString() });
       case 'checkout': return out(userCheckout(p.id, p.email, p.end));
       case 'admin_list': auth(p); return out({ bookings: listBookings(), locks: listLocks() });
       case 'admin_status': auth(p); return out(setStatus(p.id, p.status, p.note));
@@ -113,6 +114,11 @@ function findRow(id) {
   const sh = sheet('bookings', BOOK_HEADERS), r = rows(sh).filter(x => String(x.id) === String(id).trim().toUpperCase())[0];
   if (!r) throw new Error('找不到這筆預約');
   return { sh: sh, r: r, b: toBooking(r) };
+}
+function listForEmail(email) {
+  const em = String(email || '').trim().toLowerCase();
+  if (!em) throw new Error('請輸入 Email');
+  return listBookings().filter(b => String((b.applicant || {}).email || '').toLowerCase() === em).slice(0, 30);
 }
 function findForUser(id, email) {
   let f; try { f = findRow(id); } catch (e) { f = null; }
@@ -270,14 +276,14 @@ function notifyNewBooking(b) {
     '<a href="' + SITE_URL + '#admin">前往管理頁審核</a>');
   sendMail(a.email, '【NTA 預約】已收到您的申請（' + b.id + '）', summaryRows(b),
     esc(a.name) + ' 您好，已收到您的 NTA 預約申請，目前狀態為「待確認」。管理人員核准後會再寄信通知您。',
-    '請保留申請編號 <b>' + esc(b.id) + '</b>，簽退時需要使用。');
+    '使用完畢後，請到 <a href="' + SITE_URL + '#checkout">簽退頁面</a> 輸入這個 Email 即可找到這筆預約。');
 }
 function notifyStatus(b) {
   const a = b.applicant || {}, st = STATUS_LABEL[b.status] || b.status;
   let intro = esc(a.name) + ' 您好，您的 NTA 預約狀態已更新為「' + st + '」。', outro = '';
   if (b.status === 'approved') {
     intro = esc(a.name) + ' 您好，您的 NTA 預約已核准。';
-    if (b.kind === 'self') outro = '使用完畢後，請到 <a href="' + SITE_URL + '#checkout">簽退頁面</a> 輸入申請編號與 Email 完成簽退。費用從預約開始時間計算到簽退時間，每 ' + BILL_UNIT_MINUTES + ' 分鐘為一計費單位。';
+    if (b.kind === 'self') outro = '使用完畢後，請到 <a href="' + SITE_URL + '#checkout">簽退頁面</a> 輸入 Email 完成簽退。費用從預約開始時間計算到簽退時間，每 ' + BILL_UNIT_MINUTES + ' 分鐘為一計費單位。';
   }
   sendMail(a.email, '【NTA 預約】' + st + '（' + b.id + '）', summaryRows(b).concat([['管理人員備註', b.adminNote]]), intro, outro);
 }
@@ -291,8 +297,17 @@ function notifySettled(b) {
   r.push(['應繳金額', '<b>' + money(b.billAmount) + '</b>', true]);
   sendMail(a.email, '【NTA 繳費通知】' + b.id + '｜' + money(b.billAmount), r,
     esc(a.name) + ' 您好，您的 NTA 使用已結算，費用如下。',
-    '繳費單可在 <a href="' + SITE_URL + '#checkout">簽退頁面</a> 輸入申請編號與 Email 下載，請依機台管理單位指示完成繳費。');
+    '繳費單可在 <a href="' + SITE_URL + '#checkout">簽退頁面</a> 輸入 Email 下載，請依機台管理單位指示完成繳費。');
   sendMail(adminEmail(), '【NTA 已結算】' + a.name + '｜' + b.id + '｜' + money(b.billAmount), r, '一筆 NTA 預約已完成結算' + (b.settledBy === 'user' ? '（使用者自行簽退）' : '') + '。', '');
+}
+
+/** 測試寄信：在 Apps Script 選單選 testMail 執行，會寄一封測試信給管理人員，並在「執行記錄」顯示收件地址 */
+function testMail() {
+  const to = adminEmail();
+  console.log('管理人員通知信會寄到：' + to + '（寄件帳號：' + Session.getEffectiveUser().getEmail() + '）');
+  console.log('今天剩餘可寄信數：' + MailApp.getRemainingDailyQuota());
+  MailApp.sendEmail({ to: to, subject: '【NTA 預約系統】測試信', htmlBody: '這是一封測試信。收到這封信，代表新預約與結算通知都會寄到這個信箱。', name: 'NTA 機台預約系統' });
+  console.log('已寄出測試信');
 }
 
 /** 第一次安裝或更新後手動執行一次：建立／更新工作表欄位，並授權試算表與寄信權限 */

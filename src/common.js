@@ -164,6 +164,11 @@ const LocalDB = {
       return b;
     };
     if (action === "lookup") return { booking: find(), now: new Date().toISOString() };
+    if (action === "lookup_email") {
+      const em = String(d.email || "").trim().toLowerCase();
+      if (!em) throw new Error("請輸入 Email");
+      return { bookings: db.bookings.filter(b => String((b.applicant || {}).email || "").toLowerCase() === em).slice().reverse().slice(0, 30), now: new Date().toISOString() };
+    }
     if (action === "checkout") {
       const b = find();
       if (b.status === "completed") throw new Error("這筆預約已經簽退結算過了");

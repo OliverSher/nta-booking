@@ -20,34 +20,57 @@
 </div>
 
 <script>
-const C = { id: "", email: "", booking: null, now: null, end: "", loading: false, err: "", msg: "", confirm: false, busy: false, pdfBusy: false };
-try { const s = JSON.parse(sessionStorage.getItem("nta_checkout") || "{}"); C.id = s.id || ""; C.email = s.email || ""; } catch (e) { }
+const C = { id: "", email: "", list: null, booking: null, now: null, end: "", loading: false, err: "", msg: "", confirm: false, busy: false, pdfBusy: false };
+try { const s = JSON.parse(sessionStorage.getItem("nta_checkout") || "{}"); C.email = s.email || ""; } catch (e) { }
 
+const canCheckout = b => b.status === "approved" && b.kind === "self";
 async function lookup() {
-  C.loading = true; C.err = ""; render();
+  C.loading = true; C.err = ""; C.msg = ""; render();
   try {
-    const r = await Api.call("lookup", { id: C.id, email: C.email });
-    C.booking = r.booking; C.now = r.now ? new Date(r.now) : new Date(); C.end = "";
-    try { sessionStorage.setItem("nta_checkout", JSON.stringify({ id: C.id, email: C.email })); } catch (e) { }
-  } catch (e) { C.err = e.message; C.booking = null; }
+    const r = await Api.call("lookup_email", { email: C.email });
+    C.list = r.bookings || []; C.now = r.now ? new Date(r.now) : new Date(); C.end = ""; C.booking = null; C.id = "";
+    if (!C.list.length) C.err = "找不到這個 Email 的預約，請確認是否與預約時填寫的 Email 相同。";
+    // 只有一筆可簽退（或只有一筆預約）時自動選好
+    const ready = C.list.filter(canCheckout);
+    const pick = ready.length === 1 ? ready[0] : C.list.length === 1 ? C.list[0] : null;
+    if (pick) select(pick.id, false);
+    try { sessionStorage.setItem("nta_checkout", JSON.stringify({ email: C.email })); } catch (e) { }
+  } catch (e) { C.err = e.message; C.list = null; }
   C.loading = false; render();
 }
+function select(id, rerender = true) { C.id = id; C.booking = (C.list || []).find(b => b.id === id) || null; C.end = ""; C.confirm = false; C.msg = ""; if (rerender) render(); }
 async function checkout() {
   C.busy = true; C.err = ""; render();
-  try { const r = await Api.call("checkout", { id: C.id, email: C.email, end: C.end }); C.booking = r.booking; C.msg = "簽退完成，繳費通知已寄到你的 Email。"; }
-  catch (e) { C.err = e.message; }
+  try {
+    const r = await Api.call("checkout", { id: C.id, email: C.email, end: C.end });
+    C.booking = r.booking; C.list = C.list.map(b => b.id === r.booking.id ? r.booking : b);
+    C.msg = "簽退完成，繳費通知已寄到你的 Email。";
+  } catch (e) { C.err = e.message; }
   C.busy = false; C.confirm = false; render();
 }
 
+function listHtml() {
+  if (!C.list || !C.list.length) return "";
+  return `<h3 style="font-size:.95rem;margin:20px 0 8px">你的預約（${C.list.length} 筆）${C.list.some(canCheckout) ? "　·　請點選要簽退的那一筆" : ""}</h3>
+  <div class="blist">${C.list.map(b => {
+    const on = b.id === C.id, first = (b.slots || []).slice().sort(slotCmp)[0];
+    return `<button class="pickrow${on ? " on" : ""}" data-pick="${esc(b.id)}">
+      <span class="pill ${b.status}">${STATUS_LABEL[b.status] || b.status}</span>
+      <span>${esc(RATE_LABEL[b.kind] || b.kind)}</span>
+      <span class="mono">${first ? esc(fmtSlot(first)) + (b.slots.length > 1 ? `（共 ${b.slots.length} 小時）` : "") : "—"}</span>
+      <span class="mono muted">${esc(b.id)}</span>
+      ${canCheckout(b) ? `<span class="tagok">可簽退</span>` : ""}</button>`;
+  }).join("")}</div>`;
+}
 function render() {
   const b = C.booking;
-  $("#stage").innerHTML = `<h2>查詢預約</h2><p class="hint">請輸入預約時取得的申請編號（例：NTA-20261103-001）與登記的 Email。</p>
-  <form id="lookupForm" class="grid">
-    <label class="f"><span class="req">申請編號</span><input id="c_id" type="text" value="${esc(C.id)}" placeholder="NTA-YYYYMMDD-001" autocomplete="off"></label>
-    <label class="f"><span class="req">Email</span><input id="c_email" type="email" value="${esc(C.email)}"></label>
-    <div class="full"><button class="b primary" type="submit"${C.loading ? " disabled" : ""}>${C.loading ? "查詢中…" : "查詢"}</button></div>
+  $("#stage").innerHTML = `<h2>查詢預約</h2><p class="hint">請輸入預約時填寫的 Email，系統會列出你的預約。</p>
+  <form id="lookupForm" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+    <label class="f" style="flex:1;min-width:220px"><span class="req">Email</span><input id="c_email" type="email" value="${esc(C.email)}" autocomplete="email"></label>
+    <button class="b primary" type="submit"${C.loading ? " disabled" : ""}>${C.loading ? "查詢中…" : "查詢"}</button>
   </form>
   ${C.err ? `<p class="err">${esc(C.err)}</p>` : ""}
+  ${listHtml()}
   ${b ? detail(b) : ""}`;
 }
 function detail(b) {
@@ -68,7 +91,11 @@ function detail(b) {
   else if (C.now - st > CONFIG.selfCheckoutDays * 86400e3) body = `<p class="hint">這筆預約開始已超過 ${CONFIG.selfCheckoutDays} 天，無法自行簽退。請聯絡機台管理人員，由管理人員登錄實際結束時間並結算。</p>`;
   else {
     const opts = endOptions(b, new Date());
-    if (!opts.some(o => o.toISOString() === C.end)) C.end = opts.length ? opts[opts.length - 1].toISOString() : "";
+    if (!opts.some(o => o.toISOString() === C.end)) {
+      // 預設帶入「預約結束時間」；若還沒到，就用最接近現在的時間
+      const bookedEnd = new Date(st.getTime() + (b.slots || []).length * 3600e3).toISOString();
+      C.end = opts.some(o => o.toISOString() === bookedEnd) ? bookedEnd : (opts.length ? opts[opts.length - 1].toISOString() : "");
+    }
     let est; try { est = settle(b, { end: C.end }); } catch (e) { est = null; }
     const wd = ["日", "一", "二", "三", "四", "五", "六"];
     const lab = d => `${d.getMonth() + 1}/${d.getDate()}（${wd[d.getDay()]}）${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -88,12 +115,13 @@ function detail(b) {
 
 document.addEventListener("submit", e => {
   if (e.target.id !== "lookupForm") return;
-  e.preventDefault(); C.id = $("#c_id").value.trim().toUpperCase(); C.email = $("#c_email").value.trim(); C.msg = "";
-  if (!C.id || !C.email) { C.err = "請輸入申請編號與 Email"; render(); return; }
+  e.preventDefault(); C.email = $("#c_email").value.trim(); C.msg = "";
+  if (!C.email) { C.err = "請輸入 Email"; render(); return; }
   lookup();
 });
 document.addEventListener("change", e => { if (e.target.id === "endSel") { C.end = e.target.value; render(); } });
 document.addEventListener("click", async e => {
+  const p = e.target.closest("[data-pick]"); if (p) { select(p.dataset.pick); return; }
   const t = e.target.closest("[data-act]"); if (!t || t.disabled) return;
   const a = t.dataset.act;
   if (a === "ask") { C.confirm = true; render(); }
@@ -106,7 +134,7 @@ setInterval(() => { const b = C.booking; if (b && b.status === "approved" && b.k
 $("#demoBanner").hidden = !DEMO;
 $("#unitName").textContent = CONFIG.unit;
 render();
-if (C.id && C.email) lookup();
+if (C.email) lookup();
 </script>
 </body>
 </html>

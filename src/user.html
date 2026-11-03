@@ -211,7 +211,7 @@ function step3() {
 }
 function step4() {
   const done = S.submitted;
-  return `${done ? `<div class="notice ok"><b>已送出預約</b>　申請編號 <span class="mono">${esc(done.id)}</span>，狀態：待管理人員確認。<br>確認信已寄到 ${esc(S.applicant.email)}，核准後會再通知你。請下載報價單，簽名後將「管理人聯」與「切結書」交給機台管理人員。${currentKind() === "self" ? `<br>使用完畢請到「<a href="#checkout">簽退</a>」頁面輸入申請編號與 Email 完成簽退，系統會依實際時間開立繳費單。` : ""}</div>`
+  return `${done ? `<div class="notice ok"><b>已送出預約</b>　申請編號 <span class="mono">${esc(done.id)}</span>，狀態：待管理人員確認。<br>確認信已寄到 ${esc(S.applicant.email)}，核准後會再通知你。請下載報價單，簽名後將「管理人聯」與「切結書」交給機台管理人員。${currentKind() === "self" ? `<br>使用完畢請到「<a href="#checkout">簽退</a>」頁面輸入 Email 完成簽退，系統會依實際時間開立繳費單。` : ""}</div>`
       : `<h2>確認送出</h2><p class="hint">請確認報價單內容。送出後時段會先保留為「待確認」，管理人員核准後正式鎖定。</p>`}
   <div id="preview"></div>
   ${S.submitError ? `<p class="err">${esc(S.submitError)}</p>` : ""}
