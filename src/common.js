@@ -30,7 +30,8 @@ const CONFIG = {
   hours: [9, 10, 11, 13, 14, 15, 16],            // 可預約起始時段（避開午休 12:00）
   maxSelfHours: 4,                               // 自行操作單次最多時數
   weeksAhead: 8,                                 // 開放預約幾週內的時段
-  startWeekOffset: 0,                            // 0 = 本週起可預約（已過去的時段不能選）；1 = 下週起才能預約
+  startWeekOffset: 0,                            // 0 = 本週起可預約；1 = 下週起；-1 = 上週起（可補登上週的使用）
+  allowPastSlots: true,                          // true = 已經過去的時段也可以預約（補登用）
   departments: ["動力機械工程學系", "奈米工程與微系統研究所", "化學工程學系", "材料科學工程學系", "醫學科學系", "生命科學系", "分析與環境科學研究所", "校外單位", "其他（請於備註說明）"]
 };
 /* ========================================== */
@@ -203,7 +204,7 @@ function calendarHtml({ offset, minOffset, maxOffset, map = {}, selected = [], a
       if (!admin) dis = true;
       if (admin && info.id && info.id === focusId) cls += " focus";
     } else if (on) { cls += " sel"; label = "✓"; }
-    if (past) { cls += " past"; if (!admin) dis = true; }
+    if (past) { cls += " past"; if (!admin && !CONFIG.allowPastSlots) dis = true; }
     return `<td><button class="${cls}" data-slot="${key}" title="${esc(title)}"${dis ? " disabled" : ""}>${esc(label)}</button></td>`;
   }).join("")}</tr>`).join("");
   return `<div class="weeknav"><button class="b ghost" data-act="wprev"${offset <= minOffset ? " disabled" : ""}>‹ 上一週</button>

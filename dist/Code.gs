@@ -99,9 +99,9 @@ function slotMap() {
   return m;
 }
 function publicSlots() {
-  // 對外只回傳時段狀態，不含申請人資料
-  const today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), m = slotMap(), o = {};
-  Object.keys(m).forEach(k => { if (k.split('|')[0] >= today) o[k] = { state: m[k].state, reason: m[k].reason || '' }; });
+  // 對外只回傳時段狀態，不含申請人資料；含過去 14 天（網站允許補登過去的時段）
+  const from = Utilities.formatDate(new Date(Date.now() - 14 * 86400e3), TZ, 'yyyy-MM-dd'), m = slotMap(), o = {};
+  Object.keys(m).forEach(k => { if (k.split('|')[0] >= from) o[k] = { state: m[k].state, reason: m[k].reason || '' }; });
   return o;
 }
 function updateRow(sh, row, fields) {

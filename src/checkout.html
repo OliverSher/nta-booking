@@ -65,6 +65,7 @@ function detail(b) {
   else if (b.status === "rejected" || b.status === "cancelled") body = `<p class="err">這筆預約${STATUS_LABEL[b.status]}${b.adminNote ? "：" + esc(b.adminNote) : ""}。</p>`;
   else if (b.kind !== "self") body = `<p class="hint">「${esc(RATE_LABEL[b.kind])}」由管理人員結算，不需要自行簽退。結算完成後會寄繳費通知到你的 Email。</p>`;
   else if (C.now < st) body = `<p class="hint">預約時段在 ${fmtDateTime(st.toISOString())} 開始，開始之後才能簽退。</p>`;
+  else if (C.now - st > 24 * 3600e3) body = `<p class="hint">這筆預約開始已超過 24 小時，無法自行簽退。請聯絡機台管理人員，由管理人員登錄實際結束時間並結算。</p>`;
   else {
     let est; try { est = settle(b, { end: new Date().toISOString() }); } catch (e) { est = null; }
     body = `<dl class="kv"><dt>計費起始</dt><dd>${fmtDateTime(st.toISOString())}（預約開始時間）</dd>

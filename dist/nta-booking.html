@@ -44,7 +44,8 @@ const CONFIG = {
   hours: [9, 10, 11, 13, 14, 15, 16],            // 可預約起始時段（避開午休 12:00）
   maxSelfHours: 4,                               // 自行操作單次最多時數
   weeksAhead: 8,                                 // 開放預約幾週內的時段
-  startWeekOffset: 0,                            // 0 = 本週起可預約（已過去的時段不能選）；1 = 下週起才能預約
+  startWeekOffset: 0,                            // 0 = 本週起可預約；1 = 下週起；-1 = 上週起（可補登上週的使用）
+  allowPastSlots: true,                          // true = 已經過去的時段也可以預約（補登用）
   departments: ["動力機械工程學系", "奈米工程與微系統研究所", "化學工程學系", "材料科學工程學系", "醫學科學系", "生命科學系", "分析與環境科學研究所", "校外單位", "其他（請於備註說明）"]
 };
 /* ========================================== */
@@ -217,7 +218,7 @@ function calendarHtml({ offset, minOffset, maxOffset, map = {}, selected = [], a
       if (!admin) dis = true;
       if (admin && info.id && info.id === focusId) cls += " focus";
     } else if (on) { cls += " sel"; label = "✓"; }
-    if (past) { cls += " past"; if (!admin) dis = true; }
+    if (past) { cls += " past"; if (!admin && !CONFIG.allowPastSlots) dis = true; }
     return `<td><button class="${cls}" data-slot="${key}" title="${esc(title)}"${dis ? " disabled" : ""}>${esc(label)}</button></td>`;
   }).join("")}</tr>`).join("");
   return `<div class="weeknav"><button class="b ghost" data-act="wprev"${offset <= minOffset ? " disabled" : ""}>‹ 上一週</button>
@@ -1556,6 +1557,7 @@ function detail(b) {
   else if (b.status === "rejected" || b.status === "cancelled") body = `<p class="err">這筆預約${STATUS_LABEL[b.status]}${b.adminNote ? "：" + esc(b.adminNote) : ""}。</p>`;
   else if (b.kind !== "self") body = `<p class="hint">「${esc(RATE_LABEL[b.kind])}」由管理人員結算，不需要自行簽退。結算完成後會寄繳費通知到你的 Email。</p>`;
   else if (C.now < st) body = `<p class="hint">預約時段在 ${fmtDateTime(st.toISOString())} 開始，開始之後才能簽退。</p>`;
+  else if (C.now - st > 24 * 3600e3) body = `<p class="hint">這筆預約開始已超過 24 小時，無法自行簽退。請聯絡機台管理人員，由管理人員登錄實際結束時間並結算。</p>`;
   else {
     let est; try { est = settle(b, { end: new Date().toISOString() }); } catch (e) { est = null; }
     body = `<dl class="kv"><dt>計費起始</dt><dd>${fmtDateTime(st.toISOString())}（預約開始時間）</dd>
