@@ -102,7 +102,7 @@ function bookingCard(b) {
     <div class="bmeta">收費身分：${esc(billingLabel(a))}　·　${money(b.rate)} / ${esc(b.unit || "hr")} × ${esc(b.hours)}${b.priceNote ? "（" + esc(b.priceNote) + "）" : ""}</div>
     <div class="bmeta">${esc(a.dept)}　·　指導教授 ${esc(a.advisor)}　·　學號 ${esc(a.sid)}　·　送出 ${esc(fmtDateTime(b.createdAt))}</div>
     ${(b.slots || []).length ? `<div class="bslots">${b.slots.slice().sort(slotCmp).map(fmtSlot).join("　")}</div>` : ""}
-    ${b.status === "completed" ? `<div class="bmeta" style="color:var(--ink)">結算：${b.unit === "套" ? "訓練課程（按套）" : fmtDuration(b.billMinutes) + " × " + money(b.billRate) + "/hr"}　·　應繳 <b>${money(b.billAmount)}</b>　·　${b.kind === "self" ? "簽退" : "結算"} ${esc(fmtDateTime(b.checkoutAt))}${b.settledBy === "admin" ? "（管理人員登錄）" : ""}</div>` : ""}
+    ${b.status === "completed" ? `<div class="bmeta" style="color:var(--ink)">結算：${b.unit === "套" ? "訓練課程（按套）" : fmtDuration(b.billMinutes) + " × " + money(b.billRate) + "/hr"}　·　應繳 <b>${money(b.billAmount)}</b>　·　${b.kind === "self" ? "使用至" : "結算"} ${esc(fmtDateTime(b.checkoutAt))}${b.settledBy === "admin" ? "（管理人員登錄）" : b.submittedAt ? "（申請人填寫，" + esc(fmtDateTime(b.submittedAt)) + " 送出）" : ""}</div>` : ""}
     ${b.status === "approved" ? settleForm(b) : ""}
     <details class="bdetail"><summary style="cursor:pointer;color:var(--muted)">詳細內容</summary><dl style="margin-top:6px">${det.filter(x => x[1]).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl></details>
     ${b.adminNote ? `<div class="bmeta">管理備註：${esc(b.adminNote)}</div>` : ""}

@@ -26,6 +26,7 @@ const CONFIG = {
   // 先期贊助（配合款）教授：會列在「收費身分」下拉選單，選擇後適用 rates 裡的 sponsor 價格
   sponsorAdvisors: ["陳玉彬", "李明蒼", "黃振煌", "黃郁棻", "林幸瑩", "魯才德", "蔡德豪", "陳之碩", "王玉麟"],
   billUnitMinutes: 15,                           // 簽退計費單位（分鐘），不足一單位以一單位計
+  selfCheckoutDays: 7,                           // 預約開始後幾天內可自行簽退（超過由管理人員代為簽退）
   paymentNote: "請於收到繳費單後依機台管理單位指示完成繳費；校內計畫經費請辦理經費轉帳。",  // 繳費單上的繳費說明
   hours: [9, 10, 11, 13, 14, 15, 16],            // 可預約起始時段（避開午休 12:00）
   maxSelfHours: 4,                               // 自行操作單次最多時數
@@ -107,6 +108,24 @@ function settle(b, { end, minutes, rate } = {}) {
   const billMinutes = Math.ceil(mins / U) * U;
   return { checkoutAt: endAt.toISOString(), billStart: start, billMinutes, billRate: r, billAmount: Math.round(r * billMinutes / 60) };
 }
+/* 自行簽退：申請人選擇使用結束時間（15 分鐘一格，不能晚於現在） */
+function endOptions(b, now = new Date()) {
+  const st = bookingStart(b), U = CONFIG.billUnitMinutes * 60000, out = [];
+  if (!st) return out;
+  const max = Math.min(st.getTime() + Math.ceil((now - st) / U) * U, st.getTime() + 24 * 3600e3);
+  for (let t = st.getTime() + U; t <= max; t += U) out.push(new Date(t));
+  return out;
+}
+function checkUserEnd(b, end, now = new Date()) {
+  const st = bookingStart(b), U = CONFIG.billUnitMinutes * 60000, e = new Date(end);
+  if (!end || isNaN(e)) throw new Error("請選擇使用結束時間");
+  if (now < st) throw new Error("預約時段尚未開始，無法簽退");
+  if (now - st > CONFIG.selfCheckoutDays * 86400e3) throw new Error(`預約開始已超過 ${CONFIG.selfCheckoutDays} 天，請聯絡機台管理人員代為簽退`);
+  if (e <= st) throw new Error("結束時間必須晚於預約開始時間");
+  if ((e - st) % U) throw new Error(`結束時間請以 ${CONFIG.billUnitMinutes} 分鐘為單位`);
+  if (e - now > U) throw new Error("結束時間不能晚於現在");
+  return e;
+}
 function fmtSlot(k) { const [d, h] = k.split("|"); return `${d} ${String(h).padStart(2, "0")}:00–${String(+h + 1).padStart(2, "0")}:00`; }
 function slotIsPast(k) { const [d, h] = k.split("|"); const t = new Date(d + "T00:00:00"); t.setHours(+h); return t < new Date(); }
 function fmtDateTime(iso) { if (!iso) return ""; const d = new Date(iso); return isNaN(d) ? String(iso) : ymd(d) + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
@@ -150,10 +169,8 @@ const LocalDB = {
       if (b.status === "completed") throw new Error("這筆預約已經簽退結算過了");
       if (b.status !== "approved") throw new Error("預約尚未核准，無法簽退");
       if (b.kind !== "self") throw new Error("此類預約由管理人員結算，不需簽退");
-      const st = bookingStart(b), now = new Date();
-      if (now < st) throw new Error("預約時段尚未開始，無法簽退");
-      if (now - st > 24 * 3600e3) throw new Error("已超過可簽退時間，請聯絡機台管理人員補登");
-      Object.assign(b, settle(b, { end: now.toISOString() }), { status: "completed", settledBy: "user" }); this.save(db);
+      const e = checkUserEnd(b, d.end);
+      Object.assign(b, settle(b, { end: e.toISOString() }), { status: "completed", settledBy: "user", submittedAt: new Date().toISOString() }); this.save(db);
       return { booking: b };
     }
     if (action.startsWith("admin_") && d.key !== DEMO_ADMIN_KEY) throw new Error("管理密碼錯誤");
@@ -288,7 +305,8 @@ function billPages(b) {
   const usage = [["服務類型", (b.mode === "service" ? "委託代工" : "自行操作") + "　—　" + RATE_LABEL[b.kind]]];
   if ((b.slots || []).length) usage.push(["預約時段", H(b.slots.slice().sort(slotCmp).map(fmtSlot).join("<br>"))]);
   if (b.billStart) usage.push(["計費起始（預約開始）", fmtDateTime(b.billStart)]);
-  if (b.kind === "self") usage.push(["簽退時間", fmtDateTime(b.checkoutAt) + (b.settledBy === "admin" ? "（管理人員登錄）" : "")]);
+  if (b.kind === "self") usage.push(["使用結束時間", fmtDateTime(b.checkoutAt) + (b.settledBy === "admin" ? "（管理人員登錄）" : "（申請人填寫）")]);
+  if (b.kind === "self" && b.submittedAt) usage.push(["簽退送出時間", fmtDateTime(b.submittedAt)]);
   else usage.push(["結算日期", fmtDateTime(b.checkoutAt)]);
   usage.push(["收費身分", billingLabel(a)]);
   if (unit === "套") usage.push(["計費方式", `${money(b.billRate)} / 套（${esc(b.priceNote || "訓練課程")}）`]);

@@ -14,10 +14,11 @@ const NOTIFY_EMAIL = '';
 const SITE_URL = 'https://ylwanglab327.github.io/NTA-booking/';
 
 const BILL_UNIT_MINUTES = 15;   // 簽退計費單位（分鐘），需與網站 CONFIG.billUnitMinutes 相同
+const SELF_CHECKOUT_DAYS = 7;   // 預約開始後幾天內可自行簽退，需與網站 CONFIG.selfCheckoutDays 相同
 const TZ = 'Asia/Taipei';
 
 const BOOK_HEADERS = ['id', 'createdAt', 'status', 'kind', 'name', 'sid', 'dept', 'advisor', 'email', 'phone', 'slots', 'hours', 'cost', 'adminNote', 'payload',
-  'checkoutAt', 'billStart', 'billMinutes', 'billRate', 'billAmount', 'settledBy'];
+  'checkoutAt', 'billStart', 'billMinutes', 'billRate', 'billAmount', 'settledBy', 'submittedAt'];
 const LOCK_HEADERS = ['slot', 'reason', 'at'];
 const KIND_LABEL = { consult: '預約諮詢', service: '委託代工', training: '機台訓練', exam: '機台考核', self: '自行操作' };
 const STATUS_LABEL = { pending: '待確認', approved: '已核准', completed: '已結算', rejected: '已退回', cancelled: '已取消' };
@@ -36,7 +37,7 @@ function handle(p) {
       case 'slots': return out({ slots: publicSlots() });
       case 'book': return out(book(p.booking));
       case 'lookup': return out({ booking: findForUser(p.id, p.email).b, now: new Date().toISOString() });
-      case 'checkout': return out(userCheckout(p.id, p.email));
+      case 'checkout': return out(userCheckout(p.id, p.email, p.end));
       case 'admin_list': auth(p); return out({ bookings: listBookings(), locks: listLocks() });
       case 'admin_status': auth(p); return out(setStatus(p.id, p.status, p.note));
       case 'admin_complete': auth(p); return out(adminComplete(p));
@@ -79,7 +80,7 @@ function toBooking(r) {
   b.createdAt = iso(r.createdAt);
   b.checkoutAt = iso(r.checkoutAt); b.billStart = iso(r.billStart);
   b.billMinutes = Number(r.billMinutes || 0); b.billRate = Number(r.billRate || 0); b.billAmount = Number(r.billAmount || 0);
-  b.settledBy = r.settledBy || '';
+  b.settledBy = r.settledBy || ''; b.submittedAt = iso(r.submittedAt);
   return b;
 }
 function listBookings() { return rows(sheet('bookings', BOOK_HEADERS)).map(toBooking).reverse(); }
@@ -190,7 +191,7 @@ function setStatus(id, status, note) {
   return { ok: true };
 }
 
-function userCheckout(id, email) {
+function userCheckout(id, email, endIso) {
   const lock = LockService.getScriptLock(); lock.waitLock(15000);
   let f;
   try {
@@ -199,12 +200,18 @@ function userCheckout(id, email) {
     if (b.status === 'completed') throw new Error('這筆預約已經簽退結算過了');
     if (b.status !== 'approved') throw new Error('預約尚未核准，無法簽退');
     if (b.kind !== 'self') throw new Error('此類預約由管理人員結算，不需簽退');
-    const st = bookingStart(b), now = new Date();
+    const st = bookingStart(b), now = new Date(), U = BILL_UNIT_MINUTES * 60000;
     if (now < st) throw new Error('預約時段尚未開始，無法簽退');
-    if (now - st > 24 * 3600e3) throw new Error('已超過可簽退時間，請聯絡機台管理人員補登');
-    const s = settle(b, { end: now });
-    updateRow(f.sh, f.r._row, Object.assign({ status: 'completed', settledBy: 'user' }, s));
-    Object.assign(b, s, { status: 'completed', settledBy: 'user', checkoutAt: s.checkoutAt.toISOString(), billStart: s.billStart ? s.billStart.toISOString() : '' });
+    if (now - st > SELF_CHECKOUT_DAYS * 86400e3) throw new Error('預約開始已超過 ' + SELF_CHECKOUT_DAYS + ' 天，請聯絡機台管理人員代為簽退');
+    // 申請人自行填寫結束時間（15 分鐘為單位，不能晚於現在）；舊版網站沒有傳 end 時以現在時間計
+    const end = endIso ? new Date(endIso) : now;
+    if (isNaN(end)) throw new Error('請選擇使用結束時間');
+    if (end <= st) throw new Error('結束時間必須晚於預約開始時間');
+    if (endIso && (end - st) % U) throw new Error('結束時間請以 ' + BILL_UNIT_MINUTES + ' 分鐘為單位');
+    if (end - now > U) throw new Error('結束時間不能晚於現在');
+    const s = settle(b, { end: end });
+    updateRow(f.sh, f.r._row, Object.assign({ status: 'completed', settledBy: 'user', submittedAt: now }, s));
+    Object.assign(b, s, { status: 'completed', settledBy: 'user', submittedAt: now.toISOString(), checkoutAt: s.checkoutAt.toISOString(), billStart: s.billStart ? s.billStart.toISOString() : '' });
   } finally { lock.releaseLock(); }
   notifySettled(f.b);
   return { booking: f.b };
@@ -278,7 +285,8 @@ function notifySettled(b) {
   const a = b.applicant || {};
   const r = [['申請編號', b.id], ['申請人', a.name], ['服務類型', KIND_LABEL[b.kind] || b.kind]];
   if (b.billStart) r.push(['計費起始', fmtTime(b.billStart)]);
-  r.push([b.kind === 'self' ? '簽退時間' : '結算時間', fmtTime(b.checkoutAt)]);
+  r.push([b.kind === 'self' ? '使用結束時間' : '結算時間', fmtTime(b.checkoutAt)]);
+  if (b.submittedAt) r.push(['簽退送出時間', fmtTime(b.submittedAt)]);
   if (b.unit !== '套') r.push(['計費時間', fmtDuration(b.billMinutes)], ['單價', money(b.billRate) + ' / hr']);
   r.push(['應繳金額', '<b>' + money(b.billAmount) + '</b>', true]);
   sendMail(a.email, '【NTA 繳費通知】' + b.id + '｜' + money(b.billAmount), r,

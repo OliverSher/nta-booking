@@ -20,21 +20,21 @@
 </div>
 
 <script>
-const C = { id: "", email: "", booking: null, now: null, loading: false, err: "", msg: "", confirm: false, busy: false, pdfBusy: false };
+const C = { id: "", email: "", booking: null, now: null, end: "", loading: false, err: "", msg: "", confirm: false, busy: false, pdfBusy: false };
 try { const s = JSON.parse(sessionStorage.getItem("nta_checkout") || "{}"); C.id = s.id || ""; C.email = s.email || ""; } catch (e) { }
 
 async function lookup() {
   C.loading = true; C.err = ""; render();
   try {
     const r = await Api.call("lookup", { id: C.id, email: C.email });
-    C.booking = r.booking; C.now = r.now ? new Date(r.now) : new Date();
+    C.booking = r.booking; C.now = r.now ? new Date(r.now) : new Date(); C.end = "";
     try { sessionStorage.setItem("nta_checkout", JSON.stringify({ id: C.id, email: C.email })); } catch (e) { }
   } catch (e) { C.err = e.message; C.booking = null; }
   C.loading = false; render();
 }
 async function checkout() {
   C.busy = true; C.err = ""; render();
-  try { const r = await Api.call("checkout", { id: C.id, email: C.email }); C.booking = r.booking; C.msg = "簽退完成，繳費通知已寄到你的 Email。"; }
+  try { const r = await Api.call("checkout", { id: C.id, email: C.email, end: C.end }); C.booking = r.booking; C.msg = "簽退完成，繳費通知已寄到你的 Email。"; }
   catch (e) { C.err = e.message; }
   C.busy = false; C.confirm = false; render();
 }
@@ -56,7 +56,7 @@ function detail(b) {
   if ((b.slots || []).length) rows.push(["預約時段", b.slots.slice().sort(slotCmp).map(fmtSlot).join("、")]);
   let body = "";
   if (b.status === "completed") {
-    const r2 = [["計費起始", b.billStart ? fmtDateTime(b.billStart) : "—"], [b.kind === "self" ? "簽退時間" : "結算日期", fmtDateTime(b.checkoutAt)]];
+    const r2 = [["計費起始", b.billStart ? fmtDateTime(b.billStart) : "—"], [b.kind === "self" ? "使用結束時間" : "結算日期", fmtDateTime(b.checkoutAt)]];
     if (b.unit !== "套") r2.push(["計費時間", fmtDuration(b.billMinutes)], ["單價", money(b.billRate) + " / hr"]);
     body = `${C.msg ? `<div class="notice ok">${esc(C.msg)}</div>` : ""}
       <dl class="kv">${r2.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}<dt>應繳金額</dt><dd class="bill-big">${money(b.billAmount)}</dd></dl>
@@ -65,12 +65,18 @@ function detail(b) {
   else if (b.status === "rejected" || b.status === "cancelled") body = `<p class="err">這筆預約${STATUS_LABEL[b.status]}${b.adminNote ? "：" + esc(b.adminNote) : ""}。</p>`;
   else if (b.kind !== "self") body = `<p class="hint">「${esc(RATE_LABEL[b.kind])}」由管理人員結算，不需要自行簽退。結算完成後會寄繳費通知到你的 Email。</p>`;
   else if (C.now < st) body = `<p class="hint">預約時段在 ${fmtDateTime(st.toISOString())} 開始，開始之後才能簽退。</p>`;
-  else if (C.now - st > 24 * 3600e3) body = `<p class="hint">這筆預約開始已超過 24 小時，無法自行簽退。請聯絡機台管理人員，由管理人員登錄實際結束時間並結算。</p>`;
+  else if (C.now - st > CONFIG.selfCheckoutDays * 86400e3) body = `<p class="hint">這筆預約開始已超過 ${CONFIG.selfCheckoutDays} 天，無法自行簽退。請聯絡機台管理人員，由管理人員登錄實際結束時間並結算。</p>`;
   else {
-    let est; try { est = settle(b, { end: new Date().toISOString() }); } catch (e) { est = null; }
-    body = `<dl class="kv"><dt>計費起始</dt><dd>${fmtDateTime(st.toISOString())}（預約開始時間）</dd>
-        ${est ? `<dt>若現在簽退</dt><dd>${fmtDuration(est.billMinutes)}，約 <b>${money(est.billAmount)}</b></dd>` : ""}</dl>
-      <p class="hint" style="margin-top:10px">每 ${CONFIG.billUnitMinutes} 分鐘一個計費單位，不足一單位以一單位計。簽退時間以伺服器收到的時間為準，送出後無法修改。</p>
+    const opts = endOptions(b, new Date());
+    if (!opts.some(o => o.toISOString() === C.end)) C.end = opts.length ? opts[opts.length - 1].toISOString() : "";
+    let est; try { est = settle(b, { end: C.end }); } catch (e) { est = null; }
+    const wd = ["日", "一", "二", "三", "四", "五", "六"];
+    const lab = d => `${d.getMonth() + 1}/${d.getDate()}（${wd[d.getDay()]}）${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    body = `<dl class="kv"><dt>計費起始</dt><dd>${fmtDateTime(st.toISOString())}（預約開始時間）</dd></dl>
+      <label class="f" style="max-width:320px;margin-top:12px"><span class="req">實際使用結束時間</span>
+        <select id="endSel"${C.confirm ? " disabled" : ""}>${opts.slice().reverse().map(o => `<option value="${o.toISOString()}"${o.toISOString() === C.end ? " selected" : ""}>${lab(o)}</option>`).join("")}</select></label>
+      ${est ? `<dl class="kv" style="margin-top:10px"><dt>計費時間</dt><dd>${fmtDuration(est.billMinutes)}（${est.billMinutes / CONFIG.billUnitMinutes} 單位 × ${CONFIG.billUnitMinutes} 分鐘）</dd><dt>應繳金額</dt><dd class="bill-big">${money(est.billAmount)}</dd></dl>` : ""}
+      <p class="hint" style="margin-top:10px">請選擇你實際結束使用的時間，每 ${CONFIG.billUnitMinutes} 分鐘一格，費用從預約開始時間算起。系統會同時記錄你按下簽退的時間，送出後無法修改。</p>
       <div class="btns"><span></span><div class="right">
         ${C.confirm ? `<button class="b ghost" data-act="unconfirm">取消</button><button class="b ok" data-act="checkout"${C.busy ? " disabled" : ""}>${C.busy ? "簽退中…" : "確定簽退"}</button>`
           : `<button class="b primary" data-act="ask">簽退</button>`}</div></div>`;
@@ -86,6 +92,7 @@ document.addEventListener("submit", e => {
   if (!C.id || !C.email) { C.err = "請輸入申請編號與 Email"; render(); return; }
   lookup();
 });
+document.addEventListener("change", e => { if (e.target.id === "endSel") { C.end = e.target.value; render(); } });
 document.addEventListener("click", async e => {
   const t = e.target.closest("[data-act]"); if (!t || t.disabled) return;
   const a = t.dataset.act;
@@ -94,7 +101,7 @@ document.addEventListener("click", async e => {
   if (a === "checkout") checkout();
   if (a === "bill") { C.pdfBusy = true; render(); try { await downloadPdf(C.booking, "bill"); } catch (err) { C.err = "PDF 產生失敗：" + err.message; } C.pdfBusy = false; render(); }
 });
-setInterval(() => { const b = C.booking; if (b && b.status === "approved" && b.kind === "self" && !C.confirm && !C.busy) { C.now = new Date(); render(); } }, 30000);
+setInterval(() => { const b = C.booking; if (b && b.status === "approved" && b.kind === "self" && !C.confirm && !C.busy && document.activeElement?.id !== "endSel") { C.now = new Date(); render(); } }, 60000);
 
 $("#demoBanner").hidden = !DEMO;
 $("#unitName").textContent = CONFIG.unit;
