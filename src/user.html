@@ -58,9 +58,17 @@ const S = {
 
 /* ----- 時段資料 ----- */
 async function loadSlots() {
-  try { const r = await Api.call("slots"); S.slotMap = r.slots || {}; S.slotsError = ""; }
+  // 先顯示上次存在這台電腦的時段（立即可用），同時向伺服器取得最新資料
+  if (!S.slotsLoaded) {
+    try { const c = JSON.parse(localStorage.getItem("nta_slots_cache") || "null"); if (c && Date.now() - c.t < 30 * 60e3) { S.slotMap = c.slots; S.slotsLoaded = true; } } catch (e) { }
+  }
+  S.slotsRefreshing = true; if (S.step === 3) render();
+  try {
+    const r = await Api.call("slots"); S.slotMap = r.slots || {}; S.slotsError = "";
+    try { localStorage.setItem("nta_slots_cache", JSON.stringify({ t: Date.now(), slots: S.slotMap })); } catch (e) { }
+  }
   catch (e) { S.slotsError = "無法載入已預約時段：" + e.message; }
-  S.slotsLoaded = true;
+  S.slotsLoaded = true; S.slotsRefreshing = false;
   // 已選但剛被別人預約的時段要移除
   for (const k of Object.keys(S.slots)) S.slots[k] = S.slots[k].filter(s => !S.slotMap[s]);
   if (S.step === 3) render();
@@ -149,7 +157,7 @@ function slotPicker(kind, max, label) {
   const sel = S.slots[kind];
   return `${S.slotsError ? `<p class="err">${esc(S.slotsError)}</p>` : ""}
   ${calendarHtml({ offset: S.weekOffset, minOffset: CONFIG.startWeekOffset, maxOffset: CONFIG.weeksAhead, map: S.slotMap, selected: sel })}
-  <p class="hint" style="margin:6px 0 0">${label}，最多選 ${max} 格。</p>
+  <p class="hint" style="margin:6px 0 0">${label}，最多選 ${max} 格。${S.slotsRefreshing ? `<span style="color:var(--accent)">　正在更新最新時段…</span>` : ""}</p>
   ${sel.length ? `<p class="mono" style="font-size:.82rem;margin:6px 0 0">已選：${sel.slice().sort(slotCmp).map(fmtSlot).join("、")}</p>` : ""}`;
 }
 function step3() {

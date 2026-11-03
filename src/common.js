@@ -199,7 +199,9 @@ const Api = {
   async call(action, data = {}) {
     if (DEMO) return LocalDB.handle(action, JSON.parse(JSON.stringify(data)));
     // text/plain 可避免瀏覽器的 CORS 預檢，Apps Script 才收得到
-    const r = await fetch(CONFIG.apiUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action, ...data }) });
+    let r;
+    try { r = await fetch(CONFIG.apiUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action, ...data }) }); }
+    catch (e) { throw new Error("連不上資料庫。請確認網路連線；若是在檔案預覽視窗中開啟，請改用正式網址開啟網站。"); }
     if (!r.ok) throw new Error("伺服器回應錯誤（" + r.status + "）");
     const j = await r.json();
     if (j.error) throw new Error(j.error);

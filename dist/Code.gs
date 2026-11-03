@@ -40,7 +40,7 @@ function handle(p) {
   try {
     switch (p.action) {
       case 'ping': return out({ ok: true });
-      case 'slots': return out({ slots: publicSlots() });
+      case 'slots': return out({ slots: cachedSlots() });
       case 'book': return out(book(p.booking));
       case 'lookup': return out({ booking: findForUser(p.id, p.email).b, now: new Date().toISOString() });
       case 'lookup_email': return out({ bookings: listForEmail(p.email), now: new Date().toISOString() });
@@ -106,6 +106,15 @@ function slotMap() {
   Object.keys(locks).forEach(k => { m[k] = { state: 'locked', reason: locks[k].reason }; });
   return m;
 }
+/* 時段查詢加快取：同樣的結果 5 分鐘內直接回傳，有任何預約或鎖定變動就清掉 */
+function cachedSlots() {
+  const c = CacheService.getScriptCache(), hit = c.get('slots_v1');
+  if (hit) return JSON.parse(hit);
+  const v = publicSlots();
+  try { c.put('slots_v1', JSON.stringify(v), 300); } catch (e) { }
+  return v;
+}
+function clearSlotsCache() { try { CacheService.getScriptCache().remove('slots_v1'); } catch (e) { } }
 function publicSlots() {
   // 對外只回傳時段狀態，不含申請人資料；含過去 14 天（網站允許補登過去的時段）
   const from = Utilities.formatDate(new Date(Date.now() - 14 * 86400e3), TZ, 'yyyy-MM-dd'), m = slotMap(), o = {};
@@ -179,6 +188,7 @@ function book(b) {
       slots: (b.slots || []).join(', '), hours: b.hours, cost: b.cost, adminNote: '', payload: JSON.stringify(payload) };
     Object.keys(vals).forEach(k => { if (idx[k]) row[idx[k] - 1] = vals[k]; });
     sh.appendRow(row);
+    clearSlotsCache();
     b = payload;
   } finally { lock.releaseLock(); }
   notifyNewBooking(b);
@@ -197,6 +207,7 @@ function setStatus(id, status, note) {
     }
     const fields = { status: status }; if (note != null) fields.adminNote = note;
     updateRow(f.sh, f.r._row, fields);
+    clearSlotsCache();
   } finally { lock.releaseLock(); }
   f.b.status = status; if (note != null) f.b.adminNote = note;
   if (status !== 'pending' && !(status === 'approved' && prev === 'completed')) notifyStatus(f.b);
@@ -248,11 +259,13 @@ function adminComplete(p) {
 function lockSlots(slots, reason) {
   const sh = sheet('locks', LOCK_HEADERS), have = listLocks(), now = new Date().toISOString();
   slots.forEach(s => { if (!have[s]) sh.appendRow([s, reason, now]); });
+  clearSlotsCache();
   return { ok: true };
 }
 function unlockSlots(slots) {
   const sh = sheet('locks', LOCK_HEADERS), rs = rows(sh);
   rs.filter(r => slots.indexOf(String(r.slot)) >= 0).map(r => r._row).sort((a, b) => b - a).forEach(i => sh.deleteRow(i));
+  clearSlotsCache();
   return { ok: true };
 }
 
