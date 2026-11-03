@@ -13,6 +13,12 @@ const NOTIFY_EMAIL = '';
 // ★ 預約網站網址（通知信裡的連結會用到）
 const SITE_URL = 'https://ylwanglab327.github.io/NTA-booking/';
 
+// 繳費單 PDF 上的文字（需與網站 CONFIG 相同）
+const UNIT_NAME = '國立清華大學 NTA 機台管理單位';
+const INSTRUMENT = '奈米粒子追蹤分析儀 (NTA)';
+const PAYMENT_NOTE = '請於收到繳費單後依機台管理單位指示完成繳費；校內計畫經費請辦理經費轉帳。';
+const GROUP_LABEL = { coe: '清大工學院', nthu: '清大（工學院以外）', academic: '學界（校外學術單位）', industry: '業界' };
+
 const BILL_UNIT_MINUTES = 15;   // 簽退計費單位（分鐘），需與網站 CONFIG.billUnitMinutes 相同
 const SELF_CHECKOUT_DAYS = 7;   // 預約開始後幾天內可自行簽退，需與網站 CONFIG.selfCheckoutDays 相同
 const TZ = 'Asia/Taipei';
@@ -235,7 +241,7 @@ function adminComplete(p) {
     Object.assign(f.b, s, { status: 'completed', settledBy: 'admin', checkoutAt: s.checkoutAt.toISOString(), billStart: s.billStart ? s.billStart.toISOString() : '' });
     if (p.note != null) f.b.adminNote = p.note;
   } finally { lock.releaseLock(); }
-  if (f.b.billAmount > 0) notifySettled(f.b);
+  if (f.b.billAmount > 0 || f.b.kind === 'self' || f.b.kind === 'service') notifySettled(f.b);
   return { ok: true };
 }
 
@@ -253,14 +259,16 @@ function unlockSlots(slots) {
 /* ---------- Email 通知 ---------- */
 function adminEmail() { return NOTIFY_EMAIL || Session.getEffectiveUser().getEmail(); }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
-function sendMail(to, subject, rowsArr, intro, outro) {
+function sendMail(to, subject, rowsArr, intro, outro, attachments) {
   if (!to) return;
   const table = '<table style="border-collapse:collapse;font-size:14px">' + rowsArr.filter(r => r[1] !== '' && r[1] != null).map(r =>
     '<tr><td style="padding:4px 12px 4px 0;color:#666;white-space:nowrap;vertical-align:top">' + esc(r[0]) + '</td><td style="padding:4px 0">' + (r[2] ? r[1] : esc(r[1]).replace(/\n/g, '<br>')) + '</td></tr>').join('') + '</table>';
   const html = '<div style="font-family:Microsoft JhengHei,PingFang TC,sans-serif;font-size:14px;line-height:1.6;color:#222">' +
     '<p>' + intro + '</p>' + table + (outro ? '<p>' + outro + '</p>' : '') +
     '<p style="color:#888;font-size:12px;margin-top:24px">此信由 NTA 機台預約系統自動寄出。</p></div>';
-  try { MailApp.sendEmail({ to: to, subject: subject, htmlBody: html, name: 'NTA 機台預約系統', replyTo: adminEmail() }); }
+  const msg = { to: to, subject: subject, htmlBody: html, name: 'NTA 機台預約系統', replyTo: adminEmail() };
+  if (attachments && attachments.length) msg.attachments = attachments;
+  try { MailApp.sendEmail(msg); }
   catch (e) { console.error('寄信失敗：' + e); }
 }
 function summaryRows(b) {
@@ -295,10 +303,65 @@ function notifySettled(b) {
   if (b.submittedAt) r.push(['簽退送出時間', fmtTime(b.submittedAt)]);
   if (b.unit !== '套') r.push(['計費時間', fmtDuration(b.billMinutes)], ['單價', money(b.billRate) + ' / hr']);
   r.push(['應繳金額', '<b>' + money(b.billAmount) + '</b>', true]);
+  let pdf = null;
+  try { pdf = billPdf(b); } catch (e) { console.error('繳費單 PDF 產生失敗：' + e); }
+  const att = pdf ? [pdf] : [];
+  const who = b.settledBy === 'admin' ? '（管理人員代為結算）' : '（申請人自行簽退）';
   sendMail(a.email, '【NTA 繳費通知】' + b.id + '｜' + money(b.billAmount), r,
-    esc(a.name) + ' 您好，您的 NTA 使用已結算，費用如下。',
-    '繳費單可在 <a href="' + SITE_URL + '#checkout">簽退頁面</a> 輸入 Email 下載，請依機台管理單位指示完成繳費。');
-  sendMail(adminEmail(), '【NTA 已結算】' + a.name + '｜' + b.id + '｜' + money(b.billAmount), r, '一筆 NTA 預約已完成結算' + (b.settledBy === 'user' ? '（使用者自行簽退）' : '') + '。', '');
+    esc(a.name) + ' 您好，您的 NTA 使用已結算' + who + '，費用如下。',
+    (pdf ? '繳費單 PDF 已附在這封信中，' : '') + '也可以在 <a href="' + SITE_URL + '#checkout">簽退頁面</a> 輸入 Email 下載。請簽名後依機台管理單位指示完成繳費。', att);
+  sendMail(adminEmail(), '【NTA 已結算】' + a.name + '｜' + b.id + '｜' + money(b.billAmount), r,
+    '一筆 NTA 預約已完成結算' + who + '。', pdf ? '繳費單 PDF 已附在這封信中。' : '', att);
+}
+
+/* ---------- 繳費單 PDF（兩頁：申請人聯／管理單位聯） ---------- */
+function groupLabelOf(a) {
+  const g = String((a || {}).rateGroup || '');
+  return g.indexOf('sponsor:') === 0 ? '先期贊助（' + g.slice(8) + ' 教授）' : (GROUP_LABEL[g] || g || '—');
+}
+function billHtml(b) {
+  const a = b.applicant || {};
+  const td = 'border:1px solid #777;padding:5px 8px;vertical-align:top;font-size:12px';
+  const th = td + ';background:#efefef;width:22%;font-weight:normal';
+  const tbl = rs => '<table style="width:100%;border-collapse:collapse;margin-bottom:6px">' + rs.map(r =>
+    '<tr><td style="' + th + '">' + esc(r[0]) + '</td><td style="' + td + '">' + (r[2] ? r[1] : esc(r[1]).replace(/\n/g, '<br>')) + '</td></tr>').join('') + '</table>';
+  const info = [['申請人姓名', a.name], ['學號／員編', a.sid], ['所屬系所', a.dept], ['指導教授', a.advisor], ['Email／電話', (a.email || '') + '　' + (a.phone || '')], ['經費來源', a.account || '—']];
+  const use = [['服務類型', (b.mode === 'service' ? '委託代工' : '自行操作') + '　—　' + (KIND_LABEL[b.kind] || b.kind)]];
+  if ((b.slots || []).length) use.push(['預約時段', b.slots.slice().sort((x, y) => slotStart(x) - slotStart(y)).map(fmtSlot).join('\n')]);
+  if (b.billStart) use.push(['計費起始（預約開始）', fmtTime(b.billStart)]);
+  if (b.kind === 'self') use.push(['使用結束時間', fmtTime(b.checkoutAt) + (b.settledBy === 'admin' ? '（管理人員登錄）' : '（申請人填寫）')]);
+  else use.push(['結算日期', fmtTime(b.checkoutAt)]);
+  if (b.kind === 'self' && b.submittedAt) use.push(['簽退送出時間', fmtTime(b.submittedAt)]);
+  use.push(['收費身分', groupLabelOf(a)]);
+  if (b.unit === '套') use.push(['計費方式', money(b.billRate) + ' / 套（' + (b.priceNote || '訓練課程') + '）']);
+  else use.push(['計費時間', fmtDuration(b.billMinutes) + '（' + (b.billMinutes / BILL_UNIT_MINUTES) + ' 單位 × ' + BILL_UNIT_MINUTES + ' 分鐘）'], ['單價', money(b.billRate) + ' / hr']);
+  use.push(['應繳金額', '<b style="font-size:15px">' + money(b.billAmount) + '</b>', true]);
+  if (b.adminNote) use.push(['備註', b.adminNote]);
+  const sig = '<table style="width:100%;border-collapse:separate;border-spacing:8px 0;margin-top:6px"><tr>' + ['申請人簽名', '指導教授簽名', '機台管理人員簽名'].map(x =>
+    '<td style="border:1px solid #777;height:70px;vertical-align:top;padding:5px 8px;font-size:11px">' + x + '<br><br><br>日期：　　年　　月　　日</td>').join('') + '</tr></table>';
+  const office = '<div style="border:1px dashed #777;padding:8px 10px;margin-top:12px;font-size:12px"><b>管理單位填寫</b><br>收款日期：＿＿＿＿＿＿　收據編號：＿＿＿＿＿＿　實收金額：NT$ ＿＿＿＿＿　經手人：＿＿＿＿＿＿</div>';
+  const h4 = t => '<div style="font-size:13px;font-weight:bold;border-left:3px solid #111;padding-left:6px;margin:12px 0 6px">' + t + '</div>';
+  const page = (label, extra, brk) => '<div style="' + (brk ? 'page-break-after:always;' : '') + '">' +
+    '<div style="text-align:center;font-size:20px;font-weight:bold">' + esc(INSTRUMENT) + ' 使用繳費單</div>' +
+    '<div style="text-align:center;font-size:12px;letter-spacing:4px;margin:2px 0 10px">【 ' + label + ' 】</div>' +
+    '<table style="width:100%;border-bottom:2px solid #111;font-size:11px;margin-bottom:8px"><tr><td>申請編號：' + esc(b.id) + '</td><td style="text-align:center">開立日期：' +
+    Utilities.formatDate(new Date(b.checkoutAt || Date.now()), TZ, 'yyyy-MM-dd') + '</td><td style="text-align:right">' + esc(UNIT_NAME) + '</td></tr></table>' +
+    h4('一、申請人基本資料') + tbl(info) + h4('二、使用紀錄與費用') + tbl(use) +
+    h4('三、繳費說明') + '<div style="font-size:12px">' + esc(PAYMENT_NOTE) + '</div>' + h4('四、簽章') + sig + (extra || '') + '</div>';
+  return '<html><head><meta charset="utf-8"><style>@page{size:A4;margin:16mm 15mm}body{font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif;color:#111}</style></head><body>' +
+    page('申請人聯', '', true) + page('管理單位聯', office, false) + '</body></html>';
+}
+function billPdf(b) {
+  const name = 'NTA繳費單_' + b.id + '_' + ((b.applicant || {}).name || '') + '.pdf';
+  return Utilities.newBlob(billHtml(b), 'text/html', 'bill.html').getAs('application/pdf').setName(name);
+}
+
+/** 測試繳費單 PDF：在 Apps Script 選單選 testBillPdf 執行，會把最近一筆已結算預約的繳費單寄給管理人員 */
+function testBillPdf() {
+  const b = listBookings().filter(x => x.status === 'completed')[0];
+  if (!b) { console.log('目前沒有已結算的預約'); return; }
+  MailApp.sendEmail({ to: adminEmail(), subject: '【NTA 預約系統】繳費單 PDF 測試（' + b.id + '）', htmlBody: '附件為繳費單 PDF 測試。', name: 'NTA 機台預約系統', attachments: [billPdf(b)] });
+  console.log('已寄出 ' + b.id + ' 的繳費單到 ' + adminEmail());
 }
 
 /** 測試寄信：在 Apps Script 選單選 testMail 執行，會寄一封測試信給管理人員，並在「執行記錄」顯示收件地址 */
