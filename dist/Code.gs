@@ -377,6 +377,14 @@ function testBillPdf() {
   console.log('已寄出 ' + b.id + ' 的繳費單到 ' + adminEmail());
 }
 
+/** 保持程式「暖機」：執行一次 installWarmTrigger，之後每 5 分鐘自動呼叫，減少早上第一次使用時的等待 */
+function keepWarm() { cachedSlots(); }
+function installWarmTrigger() {
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'keepWarm').forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('keepWarm').timeBased().everyMinutes(5).create();
+  console.log('已設定每 5 分鐘暖機一次');
+}
+
 /** 測試寄信：在 Apps Script 選單選 testMail 執行，會寄一封測試信給管理人員，並在「執行記錄」顯示收件地址 */
 function testMail() {
   const to = adminEmail();

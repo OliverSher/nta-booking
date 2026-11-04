@@ -213,11 +213,25 @@ const Api = {
   async call(action, data = {}) {
     if (DEMO) return LocalDB.handle(action, JSON.parse(JSON.stringify(data)));
     // text/plain 可避免瀏覽器的 CORS 預檢，Apps Script 才收得到
-    let r;
-    try { r = await fetch(CONFIG.apiUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action, ...data }) }); }
-    catch (e) { throw new Error("連不上資料庫。請確認網路連線；若是在檔案預覽視窗中開啟，請改用正式網址開啟網站。"); }
-    if (!r.ok) throw new Error("伺服器回應錯誤（" + r.status + "）");
-    const j = await r.json();
+    // 每次最多等 15 秒；逾時或連線失敗自動重試一次（Google 冷啟動時第一次可能較慢）
+    const once = async () => {
+      const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 15000);
+      try {
+        const r = await fetch(CONFIG.apiUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action, ...data }), signal: ctl.signal });
+        if (!r.ok) throw new Error("伺服器回應錯誤（" + r.status + "）");
+        const txt = await r.text();
+        try { return JSON.parse(txt); } catch (e) { throw new Error("資料庫回傳格式不正確，請確認 Apps Script 部署設定（存取權需為「所有人」）"); }
+      } finally { clearTimeout(to); }
+    };
+    const readOnly = ["slots", "lookup", "lookup_email", "admin_list", "ping"].includes(action);
+    let j;
+    try { j = await once(); }
+    catch (e) {
+      if (!readOnly && e.name !== "AbortError" && !/fetch/i.test(e.message)) throw e;
+      if (!readOnly) throw new Error("連線逾時，請稍後再試。若已送出，請先到管理頁或簽退頁確認，避免重複送出。");
+      try { j = await once(); }
+      catch (e2) { throw new Error(e2.name === "AbortError" ? "Google 伺服器回應逾時，請稍後再試一次。" : "連不上資料庫。請確認網路連線；若是在檔案預覽視窗中開啟，請改用正式網址開啟網站。"); }
+    }
     if (j.error) throw new Error(j.error);
     return j;
   }
