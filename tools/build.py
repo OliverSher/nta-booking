@@ -5,7 +5,7 @@
   python3 tools/build.py                     # 產生 index.html（GitHub Pages）與 dist/nta-booking.html（系上主機）
   python3 tools/build.py --api URL           # 指定 GitHub 版使用的 Apps Script 網址
 """
-import argparse, pathlib, re
+import argparse, base64, json, pathlib, re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC, VENDOR = ROOT / "src", ROOT / "vendor"
@@ -31,6 +31,10 @@ def build(api_url):
     u_markup = u_markup.replace('href="admin.html"', 'href="#admin"')
     a_markup = a_markup.replace('href="index.html"', 'href="#"')
     libs = "\n".join((VENDOR / f).read_text(encoding="utf-8") for f in ["html2canvas.min.js", "jspdf.umd.min.js"])
+    # 操作說明的截圖（src/guide/*.jpg），以 data URI 內嵌
+    guide = {p.stem: "data:image/jpeg;base64," + base64.b64encode(p.read_bytes()).decode()
+             for p in sorted((SRC / "guide").glob("*.jpg"))}
+    guide_js = "window.GUIDE_IMG = " + json.dumps(guide) + ";"
     for chunk in (libs, u_js, a_js, c_js, common):
         assert "</script" not in chunk.lower()
 
@@ -72,6 +76,10 @@ def build(api_url):
 <script>
 /* ===== PDF 元件（html2canvas 1.4.1、jsPDF 2.5.1，MIT 授權）===== */
 {libs}
+</script>
+
+<script>
+{guide_js}
 </script>
 
 <script>

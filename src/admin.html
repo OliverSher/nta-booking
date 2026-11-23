@@ -83,7 +83,7 @@ function bookingCard(b) {
   const det = [];
   if (b.kind === "consult") det.push(["諮詢主題", d.topic], ["方案說明", d.detail], ["方便時間", d.prefer]);
   if (b.kind === "service") det.push(["諮詢單號", d.ref], ["樣品", `${d.count} 件 ${d.type}`], ["粒徑／分散液", `${d.size || "—"} nm ／ ${d.solvent || "—"}`], ["量測次數", d.repeat], ["希望完成", d.date], ["需求", d.note]);
-  if (b.kind === "training") det.push(["訓練次別", `第 ${d.round} 次`]);
+  if (b.kind === "training") det.push(["訓練次別", `第 ${d.round} 次`], ["受訓人員", `${(d.trainees || []).filter(Boolean).join("、") || "—"}（${d.people || 1} 人）`]);
   if (b.kind === "exam") (d.records || []).forEach((r, i) => det.push([`訓練 ${i + 1}`, `${r.trainee}｜訓練人 ${r.trainer}｜${r.date}｜${r.hours} hr`]));
   if (b.kind === "self") det.push(["量測目的", d.purpose], ["樣品件數", d.samples]);
   det.push(["Email／電話", `${a.email || ""}　${a.phone || ""}`], ["經費來源", a.account], ["備註", a.note]);
@@ -172,12 +172,13 @@ document.addEventListener("click", async e => {
   }
   if (t.dataset.slot) {
     const key = t.dataset.slot, info = adminSlotMap()[key];
+    if (closedRule(key)) { A.err = `${fmtSlot(key)} 是固定不開放時段（${closedRule(key).label}），如需調整請修改 CONFIG.closedRules。`; render(); return; }
     if (!info) { act("admin_lock", { slots: [key], reason: A.lockReason || "" }, `已鎖定 ${fmtSlot(key)}`); return; }
     if (info.state === "locked") { act("admin_unlock", { slots: [key] }, `已解除鎖定 ${fmtSlot(key)}`); return; }
     A.focusId = info.id; render(); return;
   }
   if (t.dataset.day) {
-    const map = adminSlotMap(), keys = CONFIG.hours.map(h => t.dataset.day + "|" + h).filter(k => !map[k]);
+    const map = adminSlotMap(), keys = CONFIG.hours.map(h => t.dataset.day + "|" + h).filter(k => !map[k] && !closedRule(k));
     if (!keys.length) { A.err = "這一天已沒有可鎖定的空白時段"; render(); return; }
     act("admin_lock", { slots: keys, reason: A.lockReason || "" }, `已鎖定 ${t.dataset.day} 的 ${keys.length} 個時段`); return;
   }

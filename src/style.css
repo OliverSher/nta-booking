@@ -182,3 +182,23 @@ table.rec input{padding:6px 8px;font-size:.88rem}
 .pickrow.on{border-color:var(--accent);background:var(--accent-soft)}
 .pickrow .muted{color:var(--muted);font-size:.8rem}
 .tagok{margin-left:auto;font-size:.76rem;font-weight:700;color:var(--ok)}
+
+/* 操作說明 */
+.guide .rules{border:1px solid var(--accent);background:var(--accent-soft);border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:.92rem}
+.guide .rules ul{margin:6px 0 0;padding-left:1.2em}
+.guide .rules li{margin:2px 0}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0 0 18px;font-size:.86rem}
+.flow span{border:1px solid var(--line);background:var(--bg);border-radius:14px;padding:3px 12px}
+.flow span.on{border-color:var(--ok);color:var(--ok);font-weight:700}
+.flow i{font-style:normal;color:var(--muted)}
+.flow small{flex-basis:100%;color:var(--muted)}
+.gsteps{list-style:none;margin:0;padding:0;counter-reset:g;display:flex;flex-direction:column;gap:22px}
+.gsteps>li{counter-increment:g;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:16px;align-items:start;border-top:1px solid var(--line);padding-top:18px}
+.gsteps h3{font-size:1.02rem;margin:0 0 6px;display:flex;align-items:center;gap:8px}
+.gsteps h3::before{content:counter(g);display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--accent);color:var(--surface);font-family:var(--f-mono);font-size:.85rem;flex:none}
+.gtext ul{margin:0;padding-left:1.2em;font-size:.9rem}
+.gtext li{margin:3px 0}
+.gfig{margin:0;min-width:0}
+.gfig img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.08);background:#fff}
+.gfig figcaption{font-size:.78rem;color:var(--muted);margin-top:4px}
+@media (max-width:720px){.gsteps>li{grid-template-columns:1fr}}

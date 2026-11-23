@@ -18,7 +18,7 @@
       <h1>NTA 機台預約系統</h1>
       <p class="sub">四步驟完成申請，送出後可下載報價單；使用完畢請記得簽退，系統會依實際時間開立繳費單</p>
     </div>
-    <a class="b primary linkbtn" href="#checkout">實驗結束？前往簽退 →</a>
+    <div style="display:flex;flex-wrap:wrap;gap:8px"><button class="b linkbtn" data-act="guide">操作說明</button><a class="b primary linkbtn" href="#checkout">實驗結束？前往簽退 →</a></div>
   </header>
 
   <div class="demo-banner" id="demoBanner" hidden>
@@ -26,7 +26,7 @@
     <button class="b ghost sm" data-act="fillExample">填入範例資料</button>
   </div>
 
-  <ol class="rail" id="rail">
+  <ol class="rail" id="rail" hidden>
     <li data-s="1"><span class="n">STEP 1</span><span class="t">申請人資料</span></li>
     <li data-s="2"><span class="n">STEP 2</span><span class="t">服務類型</span></li>
     <li data-s="3"><span class="n">STEP 3</span><span class="t">預約內容</span></li>
@@ -41,17 +41,17 @@
 <script>
 const blankApplicant = () => ({ rateGroup: "", name: "", sid: "", dept: CONFIG.departments[0], advisor: "", email: "", phone: "", account: "", note: "" });
 const S = {
-  step: 1,
+  step: 0,                    // 0 = 操作說明
   applicant: blankApplicant(),
   mode: "self",
   sub: { service: "consult", self: "use" },
   consult: { topic: "", detail: "", prefer: "" },
   order: { ref: "", count: "", type: "", size: "", solvent: "", repeat: 3, hours: "", date: "", note: "" },
-  training: { round: "1" },
+  training: { round: "1", people: "1", trainees: [""] },
   exam: { records: [0, 1, 2].map(() => ({ trainee: "", trainer: "", date: "", hours: "1" })) },
   self: { purpose: "", samples: "" },
   slots: { training: [], exam: [], use: [] },
-  weekOffset: CONFIG.startWeekOffset,
+  weekOffset: firstBookableWeekOffset(),
   slotMap: {}, slotsLoaded: false, slotsError: "",
   submitted: null, submitting: false, submitError: "", pdfBusy: false
 };
@@ -80,7 +80,7 @@ function currentKind() {
   return { training: "training", exam: "exam", use: "self" }[S.sub.self];
 }
 function curPrice() {
-  return priceFor(currentKind(), billingGroup(S.applicant), { hours: billHours(), round: S.training.round });
+  return priceFor(currentKind(), billingGroup(S.applicant), { hours: billHours(), round: S.training.round, people: S.training.people });
 }
 function billHours() {
   const k = currentKind();
@@ -96,7 +96,7 @@ function priceBar() {
 }
 function buildBooking() {
   const k = currentKind(), details = {
-    consult: { ...S.consult }, service: { ...S.order }, training: { ...S.training },
+    consult: { ...S.consult }, service: { ...S.order }, training: { round: S.training.round, people: Number(S.training.people) || 1, trainees: S.training.trainees.slice(0, Number(S.training.people) || 1) },
     exam: { records: S.exam.records.map(r => ({ ...r })) }, self: { ...S.self }
   }[k];
   const slots = (k === "consult" || k === "service") ? [] : S.slots[S.sub.self].slice().sort(slotCmp);
@@ -107,13 +107,54 @@ function buildBooking() {
 
 /* ----- 畫面 ----- */
 function render() {
+  $("#rail").hidden = S.step === 0;
   document.querySelectorAll("#rail li").forEach(li => { const n = +li.dataset.s; li.className = n < S.step ? "done" : n === S.step ? "cur" : ""; });
-  $("#stage").innerHTML = [null, step1, step2, step3, step4][S.step]();
+  $("#stage").innerHTML = [guide, step1, step2, step3, step4][S.step]();
   if (S.step === 4) mountPreview($("#preview"), buildBooking());
   bind();
 }
 function field(id, label, val, { type = "text", req = false, full = false, ph = "" } = {}) {
   return `<label class="f${full ? " full" : ""}"><span class="${req ? "req" : ""}">${label}</span><input id="${id}" type="${type}" value="${esc(val)}" placeholder="${esc(ph)}"></label>`;
+}
+/* ----- 操作說明（依程式實際流程撰寫，圖片為系統畫面截圖） ----- */
+function guide() {
+  const img = (k, alt) => (window.GUIDE_IMG || {})[k] ? `<figure class="gfig"><img src="${GUIDE_IMG[k]}" alt="${esc(alt)}" loading="lazy"><figcaption>${esc(alt)}</figcaption></figure>` : "";
+  const hours = CONFIG.hours.map(h => String(h).padStart(2, "0") + ":00").join("、");
+  return `<div class="guide">
+  <h2>操作說明</h2><p class="hint">第一次使用請先看完以下說明，約 1 分鐘。之後可從右上角「操作說明」再回來看。</p>
+  <div class="rules">
+    <div><b>預約規則</b></div>
+    <ul>
+      <li>需<b>提前 ${CONFIG.leadDays} 天</b>預約（例如今天 ${ymd(new Date()).slice(5).replace("-", "/")}，最早可預約 ${ymd(earliestBookableDate()).slice(5).replace("-", "/")}）。</li>
+      <li>可預約時段：週一至週五，每格 1 小時，起始時間 ${hours}（12:00–13:00 午休）。</li>
+      <li><b>固定不開放：</b>${esc(closedRulesText())}。</li>
+      <li>送出後時段為「待確認」，管理人員核准後才正式保留，系統會寄 Email 通知。</li>
+    </ul>
+  </div>
+  <div class="flow" aria-label="自行操作資格流程"><span>機台訓練 ×3</span><i>→</i><span>機台考核</span><i>→</i><span class="on">自行操作</span><small>未通過考核者請選「委託代工」，由管理人員代測</small></div>
+
+  <ol class="gsteps">
+    <li><div class="gtext"><h3>填寫申請人資料</h3><ul>
+      <li>先選<b>收費身分</b>：指導教授是先期贊助教授的同學，選「先期贊助－教授姓名」。</li>
+      <li>填姓名、學號、系所、指導教授、Email（通知信會寄到這裡，簽退也用這個 Email）。</li></ul></div>${img("step1", "步驟 1：申請人資料與收費身分")}</li>
+    <li><div class="gtext"><h3>選擇服務類型</h3><ul>
+      <li><b>委託代工</b>：先「預約諮詢」討論實驗方案，確認後再「下單」。</li>
+      <li><b>自行操作</b>：包含機台訓練、機台考核、預約使用。</li></ul></div>${img("step2", "步驟 2：委託代工或自行操作")}</li>
+    <li><div class="gtext"><h3>選擇時段與內容</h3><ul>
+      <li>在週曆上點選時段，白色格子可預約，選取後變成藍色。</li>
+      <li>自行操作請選<b>同一天的連續時段</b>，單次最多 ${CONFIG.maxSelfHours} 小時。</li>
+      <li>機台訓練可填<b>受訓人數與姓名</b>，同實驗室可一起受訓${CONFIG.trainingPerPerson ? "（費用按人數計）" : ""}。</li>
+      <li>下方會即時顯示計價方式與預估費用。</li></ul></div>${img("step3", "步驟 3：在週曆選擇時段")}</li>
+    <li><div class="gtext"><h3>確認送出、下載報價單</h3><ul>
+      <li>確認報價單內容後按「送出預約」，會收到確認信。</li>
+      <li>下載報價單 PDF（申請人聯、管理人聯、切結書），簽名後交給機台管理人員。</li></ul></div>${img("step4", "步驟 4：送出並下載報價單")}</li>
+    <li><div class="gtext"><h3>使用完畢後簽退</h3><ul>
+      <li>點右上角「實驗結束？前往簽退」，輸入預約時的 Email。</li>
+      <li>選擇<b>實際使用結束時間</b>（每 ${CONFIG.billUnitMinutes} 分鐘一格），費用從預約開始時間算起。</li>
+      <li>簽退後會收到附繳費單 PDF 的 Email，也可以在頁面上下載。</li></ul></div>${img("checkout", "簽退：輸入 Email、選擇結束時間")}</li>
+  </ol>
+  <div class="btns"><span></span><button class="b primary" data-act="start">我已了解，開始預約 →</button></div>
+  </div>`;
 }
 function step1() {
   const a = S.applicant;
@@ -156,7 +197,7 @@ function slotPicker(kind, max, label) {
   if (!S.slotsLoaded) return `<p class="empty">正在載入可預約時段…</p>`;
   const sel = S.slots[kind];
   return `${S.slotsError ? `<p class="err">${esc(S.slotsError)}</p>` : ""}
-  ${calendarHtml({ offset: S.weekOffset, minOffset: CONFIG.startWeekOffset, maxOffset: CONFIG.weeksAhead, map: S.slotMap, selected: sel })}
+  ${calendarHtml({ offset: S.weekOffset, minOffset: firstBookableWeekOffset(), maxOffset: CONFIG.weeksAhead, map: S.slotMap, selected: sel })}
   <p class="hint" style="margin:6px 0 0">${label}，最多選 ${max} 格。${S.slotsRefreshing ? `<span style="color:var(--accent)">　正在更新最新時段…</span>` : ""}</p>
   ${sel.length ? `<p class="mono" style="font-size:.82rem;margin:6px 0 0">已選：${sel.slice().sort(slotCmp).map(fmtSlot).join("、")}</p>` : ""}`;
 }
@@ -192,6 +233,7 @@ function step3() {
     if (S.sub.self === "training") {
       body += `<p class="hint">每次訓練 1 小時，共需完成 3 次訓練才能預約考核。</p>
       <div class="grid" style="margin-bottom:12px"><label class="f"><span class="req">本次為第幾次訓練</span><select id="t_round">${["1", "2", "3"].map(r => `<option value="${r}"${S.training.round === r ? " selected" : ""}>第 ${r} 次</option>`).join("")}</select></label></div>
+      ${traineeFields()}
       ${slotPicker("training", 1, "訓練 1 小時")}`;
     } else if (S.sub.self === "exam") {
       body += `<p class="hint">預約考核前請填寫 3 次訓練紀錄，管理人員會與訓練簽到表核對。</p>
@@ -217,6 +259,17 @@ function step3() {
   <div class="err" id="err" hidden></div>
   <div class="btns"><button class="b" data-act="prev">上一步</button><button class="b primary" data-act="next">下一步：確認送出</button></div>`;
 }
+function traineeFields() {
+  const n = Number(S.training.people) || 1;
+  while (S.training.trainees.length < n) S.training.trainees.push("");
+  if (!S.training.trainees[0]) S.training.trainees[0] = S.applicant.name;
+  return `<div class="grid" style="margin-bottom:12px">
+    <label class="f"><span class="req">受訓人數</span><select id="t_people">${Array.from({ length: CONFIG.maxTrainees }, (_, i) => String(i + 1)).map(v => `<option value="${v}"${v === String(n) ? " selected" : ""}>${v} 人</option>`).join("")}</select>
+      <small class="hint" style="margin:2px 0 0">同一間實驗室可一起受訓${CONFIG.trainingPerPerson ? "，訓練費用按人數計" : ""}</small></label>
+    <div></div>
+    ${Array.from({ length: n }, (_, i) => `<label class="f"><span class="req">受訓人員 ${i + 1} 姓名</span><input type="text" id="t_name${i}" value="${esc(S.training.trainees[i] || "")}"></label>`).join("")}
+  </div>`;
+}
 function step4() {
   const done = S.submitted;
   return `${done ? `<div class="notice ok"><b>已送出預約</b>　申請編號 <span class="mono">${esc(done.id)}</span>，狀態：待管理人員確認。<br>確認信已寄到 ${esc(S.applicant.email)}，核准後會再通知你。請下載報價單，簽名後將「管理人聯」與「切結書」交給機台管理人員。${currentKind() === "self" ? `<br>使用完畢請到「<a href="#checkout">簽退</a>」頁面輸入 Email 完成簽退，系統會依實際時間開立繳費單。` : ""}</div>`
@@ -240,6 +293,11 @@ function collect() {
     if (v("c_topic") !== undefined) { S.consult.topic = v("c_topic"); S.consult.detail = v("c_detail"); S.consult.prefer = v("c_prefer"); }
     if (v("o_ref") !== undefined) ["ref", "count", "type", "size", "solvent", "repeat", "hours", "date", "note"].forEach(k => S.order[k] = v("o_" + k));
     if (v("t_round") !== undefined) S.training.round = v("t_round");
+    if (v("t_people") !== undefined) {
+      const n = Number(S.training.people) || 1;
+      S.training.trainees = Array.from({ length: Math.max(n, S.training.trainees.length) }, (_, i) => v("t_name" + i) !== undefined ? v("t_name" + i) : (S.training.trainees[i] || ""));
+      S.training.people = v("t_people");
+    }
     if (v("r0_trainee") !== undefined) S.exam.records = [0, 1, 2].map(i => ({ trainee: v(`r${i}_trainee`), trainer: v(`r${i}_trainer`), date: v(`r${i}_date`), hours: v(`r${i}_hours`) }));
     if (v("u_purpose") !== undefined) { S.self.purpose = v("u_purpose"); S.self.samples = v("u_samples"); }
   }
@@ -257,6 +315,7 @@ function validate() {
     if (k === "consult") { need("c_topic", "諮詢主題"); need("c_detail", "實驗方案說明"); }
     if (k === "service") { need("o_ref", "諮詢單號"); need("o_count", "樣品件數"); need("o_type", "樣品種類"); need("o_hours", "預估時數"); }
     if (k === "exam") [0, 1, 2].forEach(i => { need(`r${i}_trainer`, `第${i + 1}次訓練人`); need(`r${i}_date`, `第${i + 1}次受訓日期`); });
+    if (k === "training") for (let i = 0; i < (Number(S.training.people) || 1); i++) need(`t_name${i}`, `受訓人員 ${i + 1} 姓名`);
     if (k === "self") need("u_purpose", "量測目的");
     if (["training", "exam", "self"].includes(k) && !S.slots[S.sub.self].length) miss.push("預約時段");
   }
@@ -270,6 +329,7 @@ function bind() {
     el.classList.remove("invalid");
     if (el.id === "a_rateGroup") { const n = sponsorOf(el.value), ad = $("#a_advisor"); if (n && ad && !ad.value.trim()) ad.value = n + " 教授"; }
     if (el.id === "a_advisor" || el.id === "a_rateGroup") { const h = $("#sponsorHint"); if (h) h.innerHTML = sponsorHint($("#a_advisor").value, $("#a_rateGroup").value); }
+    if (S.step === 3 && el.id === "t_people") { collect(); render(); return; }
     if (S.step === 3 && (el.id === "o_hours" || el.id === "t_round")) { collect(); const p = $(".pricebar"); if (p) p.outerHTML = priceBar(); }
   }));
   $("#stage").querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", () => { S.mode = r.value; }));
@@ -324,6 +384,8 @@ document.addEventListener("click", e => {
   const a = t.dataset.act; collect();
   if (a === "next") { if (!validate()) return; S.step++; S.submitError = ""; if (S.step === 3) loadSlots(); render(); window.scrollTo({ top: 0 }); }
   if (a === "prev") { S.step--; S.submitError = ""; render(); }
+  if (a === "guide") { S.step = 0; render(); window.scrollTo({ top: 0 }); return; }
+  if (a === "start") { S.step = 1; render(); window.scrollTo({ top: 0 }); return; }
   if (a === "wprev") { S.weekOffset--; render(); }
   if (a === "wnext") { S.weekOffset++; render(); }
   if (a === "submit") submit();

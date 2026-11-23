@@ -31,8 +31,15 @@ const CONFIG = {
   hours: [9, 10, 11, 13, 14, 15, 16],            // 可預約起始時段（避開午休 12:00）
   maxSelfHours: 4,                               // 自行操作單次最多時數
   weeksAhead: 8,                                 // 開放預約幾週內的時段
-  startWeekOffset: 0,                            // 0 = 本週起可預約；1 = 下週起；-1 = 上週起（可補登上週的使用）
-  allowPastSlots: true,                          // true = 已經過去的時段也可以預約（補登用）
+  leadDays: 3,                                   // 需提前幾天預約（以日期計：今天 11/24 → 最早可預約 11/27）
+  // 固定不開放的時段（每週重複）：weekday 1=週一…5=週五；fromHour／toHour 不填代表整天
+  closedRules: [
+    { weekday: 2, fromHour: 14, label: "週二 14:00 後不開放" },
+    { weekday: 3, label: "週三不開放" },
+    { weekday: 4, toHour: 18, label: "週四白天不開放" }
+  ],
+  maxTrainees: 6,                                // 機台訓練一次最多幾人
+  trainingPerPerson: true,                       // true = 訓練課程費用按人數計（每人一套）
   departments: ["動力機械工程學系", "奈米工程與微系統研究所", "化學工程學系", "材料科學工程學系", "醫學科學系", "生命科學系", "分析與環境科學研究所", "校外單位", "其他（請於備註說明）"]
 };
 /* ========================================== */
@@ -64,13 +71,14 @@ function rateGroupOptions(sel) {
 
 /* 計價：回傳 {rate, unit, qty, cost, note}
    ・訓練課程按「套」收費（含 3 次訓練＋考核），於預約第 1 次訓練時計費；第 2、3 次訓練與考核不另收費 */
-function priceFor(kind, group, { hours = 0, round = "1" } = {}) {
+function priceFor(kind, group, { hours = 0, round = "1", people = 1 } = {}) {
   const R = CONFIG.rates;
   if (kind === "consult") return { rate: 0, unit: "hr", qty: 0, cost: 0, note: "諮詢不收費" };
   if (kind === "service") { const r = R.service[group] || 0; return { rate: r, unit: "hr", qty: hours, cost: r * hours, note: "代工量測" }; }
   if (kind === "self") { const r = R.self[group] || 0; return { rate: r, unit: "hr", qty: hours, cost: r * hours, note: "自行操作" }; }
   const r = R.training[group] || 0;
-  if (kind === "training" && String(round) === "1") return { rate: r, unit: "套", qty: 1, cost: r, note: "訓練課程（3 次訓練＋考核）" };
+  const n = CONFIG.trainingPerPerson ? Math.max(1, Number(people) || 1) : 1;
+  if (kind === "training" && String(round) === "1") return { rate: r, unit: "套", qty: n, cost: r * n, note: `訓練課程（3 次訓練＋考核）${n > 1 ? "，" + n + " 人" : ""}` };
   return { rate: r, unit: "套", qty: 0, cost: 0, note: "已含於訓練課程費用" };
 }
 function priceTableHtml(highlight) {
@@ -82,6 +90,16 @@ function priceTableHtml(highlight) {
 }
 const STATUS_LABEL = { pending: "待確認", approved: "已核准", completed: "已結算", rejected: "已退回", cancelled: "已取消" };
 const WD = ["一", "二", "三", "四", "五"];
+/* 固定不開放與提前預約規則 */
+function slotWeekday(k) { return new Date(k.split("|")[0] + "T12:00:00+08:00").getUTCDay(); }
+function closedRule(k) {
+  const wd = slotWeekday(k), h = +k.split("|")[1];
+  return CONFIG.closedRules.find(r => r.weekday === wd && (r.fromHour == null || h >= r.fromHour) && (r.toHour == null || h < r.toHour)) || null;
+}
+function earliestBookableDate() { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + CONFIG.leadDays); return d; }
+function tooEarly(k) { return new Date(k.split("|")[0] + "T00:00:00") < earliestBookableDate(); }
+function firstBookableWeekOffset() { return Math.round((mondayOf(earliestBookableDate()) - mondayOf(new Date())) / (7 * 86400e3)); }
+function closedRulesText() { return CONFIG.closedRules.map(r => r.label).join("、"); }
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -232,9 +250,10 @@ function calendarHtml({ offset, minOffset, maxOffset, map = {}, selected = [], a
   const days = weekDays(offset);
   const head = `<tr><th class="time"></th>${days.map((d, i) => `<th>週${WD[i]}<br><span class="mono">${d.getMonth() + 1}/${d.getDate()}</span>${admin ? `<br><button class="daybtn" data-day="${ymd(d)}">整天鎖定</button>` : ""}</th>`).join("")}</tr>`;
   const rows = CONFIG.hours.map(h => `<tr><th class="time">${String(h).padStart(2, "0")}:00</th>${days.map(d => {
-    const key = ymd(d) + "|" + h, info = map[key], on = selected.includes(key), past = slotIsPast(key);
+    const key = ymd(d) + "|" + h, info = map[key], on = selected.includes(key), past = slotIsPast(key), rule = closedRule(key);
     let cls = "slot", label = "", dis = false, title = fmtSlot(key);
-    if (info) {
+    if (rule) { cls += " locked closed"; label = admin ? "固定不開放" : "不開放"; title += "｜" + rule.label; if (!admin) dis = true; }
+    else if (info) {
       cls += " " + info.state;
       label = { pending: "待確認", booked: "已預約", locked: "暫停開放" }[info.state];
       if (admin && info.state === "locked" && info.reason) label = info.reason;
@@ -242,13 +261,15 @@ function calendarHtml({ offset, minOffset, maxOffset, map = {}, selected = [], a
       if (!admin) dis = true;
       if (admin && info.id && info.id === focusId) cls += " focus";
     } else if (on) { cls += " sel"; label = "✓"; }
-    if (past) { cls += " past"; if (!admin && !CONFIG.allowPastSlots) dis = true; }
+    if (past) { cls += " past"; if (!admin) dis = true; }
+    else if (!admin && !rule && !info && tooEarly(key)) { cls += " past"; dis = true; title += `｜需提前 ${CONFIG.leadDays} 天預約`; }
     return `<td><button class="${cls}" data-slot="${key}" title="${esc(title)}"${dis ? " disabled" : ""}>${esc(label)}</button></td>`;
   }).join("")}</tr>`).join("");
   return `<div class="weeknav"><button class="b ghost" data-act="wprev"${offset <= minOffset ? " disabled" : ""}>‹ 上一週</button>
     <span class="mono">${ymd(days[0])} – ${ymd(days[4])}</span><button class="b ghost" data-act="wnext"${offset >= maxOffset ? " disabled" : ""}>下一週 ›</button></div>
   <div class="cal-scroll"><table class="cal">${head}${rows}</table></div>
-  <div class="legend"><span><i></i>可預約</span>${admin ? "" : `<span><i style="background:var(--accent);border-color:var(--accent)"></i>已選取</span>`}<span><i style="background:var(--warn-soft);border-color:transparent"></i>待確認</span><span><i style="background:var(--busy);border-color:transparent"></i>已預約</span><span><i style="background:repeating-linear-gradient(135deg,var(--busy) 0 4px,var(--surface) 4px 7px)"></i>暫停開放</span></div>`;
+  <div class="legend"><span><i></i>可預約</span>${admin ? "" : `<span><i style="background:var(--accent);border-color:var(--accent)"></i>已選取</span>`}<span><i style="background:var(--warn-soft);border-color:transparent"></i>待確認</span><span><i style="background:var(--busy);border-color:transparent"></i>已預約</span><span><i style="background:repeating-linear-gradient(135deg,var(--busy) 0 4px,var(--surface) 4px 7px)"></i>不開放／暫停開放</span>${admin ? "" : `<span><i style="opacity:.45"></i>未滿 ${CONFIG.leadDays} 天或已過去，不能預約</span>`}</div>
+  <p class="hint" style="margin:4px 0 0">固定不開放：${esc(closedRulesText())}。預約需提前 ${CONFIG.leadDays} 天。</p>`;
 }
 
 /* =====================================================================
@@ -260,7 +281,7 @@ function detailRows(b) {
   const rows = [["服務類型", (b.mode === "service" ? "委託代工" : "自行操作") + "　—　" + RATE_LABEL[k]]];
   if (k === "consult") rows.push(["諮詢主題", d.topic], ["實驗方案說明", d.detail], ["方便諮詢時間", d.prefer || "—"]);
   if (k === "service") rows.push(["諮詢單號", d.ref], ["樣品件數／種類", `${d.count} 件　${d.type}`], ["預期粒徑／分散液", `${d.size || "—"} nm　${d.solvent || "—"}`], ["每件量測次數", d.repeat || "—"], ["希望完成日期", d.date || "—"], ["實驗內容／特殊需求", d.note || "—"]);
-  if (k === "training") rows.push(["訓練次別", `第 ${d.round} 次（共 3 次）`]);
+  if (k === "training") rows.push(["訓練次別", `第 ${d.round} 次（共 3 次）`], ["受訓人員", `${(d.trainees || []).filter(Boolean).join("、") || "—"}（共 ${d.people || 1} 人）`]);
   if (k === "exam") rows.push(["訓練紀錄", H(`<table class="pt inner"><tr><th>#</th><th>受訓人</th><th>訓練人</th><th>受訓日期</th><th>時數</th></tr>${(d.records || []).map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.trainee)}</td><td>${esc(r.trainer)}</td><td>${esc(r.date)}</td><td>${esc(r.hours)}</td></tr>`).join("")}</table>`)]);
   if (k === "self") rows.push(["量測目的／樣品", `${d.purpose}（${d.samples || "—"} 件）`]);
   if ((b.slots || []).length) rows.push(["預約時段", H(b.slots.slice().sort(slotCmp).map(fmtSlot).join("<br>"))]);
@@ -330,7 +351,8 @@ function billPages(b) {
   if (b.kind === "self" && b.submittedAt) usage.push(["簽退送出時間", fmtDateTime(b.submittedAt)]);
   else usage.push(["結算日期", fmtDateTime(b.checkoutAt)]);
   usage.push(["收費身分", billingLabel(a)]);
-  if (unit === "套") usage.push(["計費方式", `${money(b.billRate)} / 套（${esc(b.priceNote || "訓練課程")}）`]);
+  if (unit === "套") usage.push(["計費方式", `${money(b.billRate)} / 套 × ${b.hours || 1}（${esc(b.priceNote || "訓練課程")}）`]);
+  if (b.kind === "training" && (b.details || {}).trainees) usage.push(["受訓人員", (b.details.trainees || []).filter(Boolean).join("、")]);
   else usage.push(["計費時間", `${fmtDuration(b.billMinutes)}（${b.billMinutes / CONFIG.billUnitMinutes} 單位 × ${CONFIG.billUnitMinutes} 分鐘）`],
     ["單價", `${money(b.billRate)} / hr`]);
   usage.push(["應繳金額", H(`<b style="font-size:16px">${money(b.billAmount)}</b>`)]);

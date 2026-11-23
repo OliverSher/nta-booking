@@ -54,6 +54,10 @@ NTA 機台預約系統 — 安裝說明（給網站管理員）
       billUnitMinutes  簽退計費單位（分鐘，預設 15；若修改，Code.gs 的 BILL_UNIT_MINUTES 也要一起改）
       paymentNote  繳費單上的繳費說明
       hours        可預約的起始時段
+      leadDays     需提前幾天預約（預設 3）
+      closedRules  每週固定不開放的時段（預設：週二 14:00 後、週三、週四白天）
+      maxTrainees  機台訓練一次最多幾人；trainingPerPerson 訓練費是否按人數計
+      ※ leadDays、closedRules 修改後，Code.gs 的 LEAD_DAYS、CLOSED_RULES 也要改成一樣
       maxSelfHours 自行操作單次最多時數
       weeksAhead   開放預約幾週內的時段
       departments  系所下拉選單

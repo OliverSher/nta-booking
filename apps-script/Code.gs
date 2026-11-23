@@ -19,6 +19,14 @@ const INSTRUMENT = '奈米粒子追蹤分析儀 (NTA)';
 const PAYMENT_NOTE = '請於收到繳費單後依機台管理單位指示完成繳費；校內計畫經費請辦理經費轉帳。';
 const GROUP_LABEL = { coe: '清大工學院', nthu: '清大（工學院以外）', academic: '學界（校外學術單位）', industry: '業界' };
 
+// 預約規則（需與網站 CONFIG.leadDays、CONFIG.closedRules 相同）
+const LEAD_DAYS = 3;
+const CLOSED_RULES = [
+  { weekday: 2, fromHour: 14, label: '週二 14:00 後不開放' },
+  { weekday: 3, label: '週三不開放' },
+  { weekday: 4, toHour: 18, label: '週四白天不開放' }
+];
+
 const BILL_UNIT_MINUTES = 15;   // 簽退計費單位（分鐘），需與網站 CONFIG.billUnitMinutes 相同
 const SELF_CHECKOUT_DAYS = 7;   // 預約開始後幾天內可自行簽退，需與網站 CONFIG.selfCheckoutDays 相同
 const TZ = 'Asia/Taipei';
@@ -168,8 +176,18 @@ function settle(b, o) {
 }
 
 /* ---------- 動作 ---------- */
+function checkBookingRules(slots) {
+  const earliest = Utilities.formatDate(new Date(Date.now() + LEAD_DAYS * 86400e3), TZ, 'yyyy-MM-dd');
+  (slots || []).forEach(k => {
+    const p = k.split('|'), wd = new Date(p[0] + 'T12:00:00+08:00').getUTCDay(), h = Number(p[1]);
+    const rule = CLOSED_RULES.filter(r => r.weekday === wd && (r.fromHour == null || h >= r.fromHour) && (r.toHour == null || h < r.toHour))[0];
+    if (rule) throw new Error(fmtSlot(k) + ' 不開放預約（' + rule.label + '）');
+    if (p[0] < earliest) throw new Error(fmtSlot(k) + ' 未滿 ' + LEAD_DAYS + ' 天，請選 ' + earliest + ' 以後的時段');
+  });
+}
 function book(b) {
   if (!b || !b.applicant || !b.applicant.name || !b.applicant.email) throw new Error('申請資料不完整');
+  checkBookingRules(b.slots);
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
   let id, now;
@@ -287,7 +305,8 @@ function sendMail(to, subject, rowsArr, intro, outro, attachments) {
 function summaryRows(b) {
   const a = b.applicant || {};
   return [['申請編號', b.id], ['申請人', a.name + '（' + (a.dept || '') + '）'], ['指導教授', a.advisor], ['服務類型', KIND_LABEL[b.kind] || b.kind],
-    ['預約時段', (b.slots || []).slice().sort((x, y) => slotStart(x) - slotStart(y)).map(fmtSlot).join('\n')], ['報價金額', money(b.cost)]];
+    ['預約時段', (b.slots || []).slice().sort((x, y) => slotStart(x) - slotStart(y)).map(fmtSlot).join('\n')],
+    ['受訓人員', b.kind === 'training' ? ((b.details || {}).trainees || []).filter(String).join('、') : ''], ['報價金額', money(b.cost)]];
 }
 function notifyNewBooking(b) {
   const a = b.applicant || {};
@@ -346,7 +365,8 @@ function billHtml(b) {
   else use.push(['結算日期', fmtTime(b.checkoutAt)]);
   if (b.kind === 'self' && b.submittedAt) use.push(['簽退送出時間', fmtTime(b.submittedAt)]);
   use.push(['收費身分', groupLabelOf(a)]);
-  if (b.unit === '套') use.push(['計費方式', money(b.billRate) + ' / 套（' + (b.priceNote || '訓練課程') + '）']);
+  if (b.unit === '套') use.push(['計費方式', money(b.billRate) + ' / 套 × ' + (b.hours || 1) + '（' + (b.priceNote || '訓練課程') + '）']);
+  if (b.kind === 'training' && (b.details || {}).trainees) use.push(['受訓人員', b.details.trainees.filter(String).join('、')]);
   else use.push(['計費時間', fmtDuration(b.billMinutes) + '（' + (b.billMinutes / BILL_UNIT_MINUTES) + ' 單位 × ' + BILL_UNIT_MINUTES + ' 分鐘）'], ['單價', money(b.billRate) + ' / hr']);
   use.push(['應繳金額', '<b style="font-size:15px">' + money(b.billAmount) + '</b>', true]);
   if (b.adminNote) use.push(['備註', b.adminNote]);
