@@ -13,6 +13,13 @@ const NOTIFY_EMAIL = '';
 // ★ 預約網站網址（通知信裡的連結會用到）
 const SITE_URL = 'https://ylwanglab327.github.io/NTA-booking/';
 
+// ★ 門禁管理員信箱：預約核准後寄「門禁開通申請」、已核准的預約取消時寄「門禁取消」。留空 = 不寄。多人用逗號分隔。
+const DOOR_EMAIL = '';
+// ★ 機台位置（會寫在門禁信裡）
+const ROOM_NAME = '【請填入機台位置，例如：工程一館 ○○○ 室】';
+// 需要開門禁的預約類型：自行操作、機台訓練、機台考核（委託代工由管理人員操作，不寄）
+const DOOR_KINDS = ['self', 'training', 'exam'];
+
 // 繳費單 PDF 上的文字（需與網站 CONFIG 相同）
 const UNIT_NAME = '國立清華大學 NTA 機台管理單位';
 const INSTRUMENT = '奈米粒子追蹤分析儀 (NTA)';
@@ -229,7 +236,11 @@ function setStatus(id, status, note) {
     clearSlotsCache();
   } finally { lock.releaseLock(); }
   f.b.status = status; if (note != null) f.b.adminNote = note;
-  if (status !== 'pending' && !(status === 'approved' && prev === 'completed')) notifyStatus(f.b);
+  if (status !== 'pending' && !(status === 'approved' && prev === 'completed')) {
+    notifyStatus(f.b);
+    if (status === 'approved') { notifyAdminApproved(f.b); notifyDoor(f.b, 'open'); }
+    if ((status === 'cancelled' || status === 'rejected') && prev === 'approved') notifyDoor(f.b, 'cancel');
+  }
   return { ok: true };
 }
 
@@ -318,6 +329,40 @@ function notifyNewBooking(b) {
   sendMail(a.email, '【NTA 預約】已收到您的申請（' + b.id + '）', summaryRows(b),
     esc(a.name) + ' 您好，已收到您的 NTA 預約申請，目前狀態為「待確認」。管理人員核准後會再寄信通知您。',
     '使用完畢後，請到 <a href="' + SITE_URL + '#checkout">簽退頁面</a> 輸入這個 Email 即可找到這筆預約。');
+}
+/* 把時段整理成「日期 起–迄」：同一天連續的時段合併 */
+function slotRanges(slots) {
+  const ks = (slots || []).slice().sort((x, y) => slotStart(x) - slotStart(y)), out = [];
+  ks.forEach(k => {
+    const d = k.split('|')[0], h = Number(k.split('|')[1]), last = out[out.length - 1];
+    if (last && last.d === d && last.to === h) last.to = h + 1; else out.push({ d: d, from: h, to: h + 1 });
+  });
+  const wd = ['日', '一', '二', '三', '四', '五', '六'];
+  return out.map(r => r.d + '（' + wd[new Date(r.d + 'T12:00:00+08:00').getUTCDay()] + '）' + ('0' + r.from).slice(-2) + ':00–' + ('0' + r.to).slice(-2) + ':00');
+}
+function notifyAdminApproved(b) {
+  const a = b.applicant || {};
+  sendMail(adminEmail(), '【NTA 已核准】' + a.name + '｜' + (KIND_LABEL[b.kind] || b.kind) + '｜' + (slotRanges(b.slots)[0] || b.id), summaryRows(b).concat([['Email', a.email], ['電話', a.phone], ['管理人員備註', b.adminNote]]),
+    '已核准以下 NTA 預約，系統已通知申請人' + (DOOR_EMAIL && DOOR_KINDS.indexOf(b.kind) >= 0 && (b.slots || []).length ? '，並寄出門禁開通申請給門禁管理員' : '') + '。',
+    '<a href="' + SITE_URL + '#admin">前往管理頁</a>');
+}
+function notifyDoor(b, mode) {
+  if (!DOOR_EMAIL || DOOR_KINDS.indexOf(b.kind) < 0 || !(b.slots || []).length) return;
+  const a = b.applicant || {}, ranges = slotRanges(b.slots);
+  const trainees = b.kind === 'training' ? ((b.details || {}).trainees || []).filter(String) : [];
+  const people = trainees.length ? trainees.join('、') + '（共 ' + trainees.length + ' 人，由機台管理人員帶領）' : a.name;
+  const rows = [['地點', ROOM_NAME], ['使用日期時段', ranges.join('\n')], ['使用人', people], ['申請人學號／員編', a.sid], ['系所', a.dept],
+    ['指導教授', a.advisor], ['申請人電話', a.phone], ['申請人 Email', a.email], ['使用類型', KIND_LABEL[b.kind] || b.kind], ['申請編號', b.id]];
+  const who = trainees.length ? trainees[0] + ' 等 ' + trainees.length + ' 人' : a.name;
+  if (mode === 'cancel') {
+    sendMail(DOOR_EMAIL, '【NTA 門禁取消】' + ranges[0] + '｜' + who, rows,
+      '門禁管理員您好：<br>以下 NTA 機台預約已取消，先前申請的門禁開通請一併取消，謝謝。',
+      '如有疑問請直接回覆此信，會寄到機台管理人員信箱。');
+    return;
+  }
+  sendMail(DOOR_EMAIL, '【NTA 門禁開通申請】' + ranges[0] + (ranges.length > 1 ? ' 等 ' + ranges.length + ' 段' : '') + '｜' + who, rows,
+    '門禁管理員您好：<br>以下 NTA 機台使用預約已由機台管理人員核准，煩請協助於下列時段開通 <b>' + esc(ROOM_NAME) + '</b> 的門禁權限，謝謝。',
+    '使用人為上述申請人' + (trainees.length ? '及受訓人員' : '') + '，使用結束後即可關閉權限。<br>如有疑問請直接回覆此信，會寄到機台管理人員信箱。');
 }
 function notifyStatus(b) {
   const a = b.applicant || {}, st = STATUS_LABEL[b.status] || b.status;
