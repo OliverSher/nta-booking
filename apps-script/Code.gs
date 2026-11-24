@@ -19,13 +19,14 @@ const INSTRUMENT = '奈米粒子追蹤分析儀 (NTA)';
 const PAYMENT_NOTE = '請於收到繳費單後依機台管理單位指示完成繳費；校內計畫經費請辦理經費轉帳。';
 const GROUP_LABEL = { coe: '清大工學院', nthu: '清大（工學院以外）', academic: '學界（校外學術單位）', industry: '業界' };
 
-// 預約規則（需與網站 CONFIG.leadDays、CONFIG.closedRules 相同）
+// 預約規則（需與網站 CONFIG.leadDays、CONFIG.trainingWindows、CONFIG.trainingKinds 相同）
 const LEAD_DAYS = 3;
-const CLOSED_RULES = [
-  { weekday: 2, fromHour: 14, label: '週二 14:00 後不開放' },
-  { weekday: 3, label: '週三不開放' },
-  { weekday: 4, toHour: 18, label: '週四白天不開放' }
+const TRAINING_WINDOWS = [   // 機台訓練與考核只開放這些時段；自行操作不受限制
+  { weekday: 2, fromHour: 14, label: '週二 14:00 後' },
+  { weekday: 3, label: '週三整天' },
+  { weekday: 4, label: '週四白天' }
 ];
+const TRAINING_KINDS = ['training', 'exam'];
 
 const BILL_UNIT_MINUTES = 15;   // 簽退計費單位（分鐘），需與網站 CONFIG.billUnitMinutes 相同
 const SELF_CHECKOUT_DAYS = 7;   // 預約開始後幾天內可自行簽退，需與網站 CONFIG.selfCheckoutDays 相同
@@ -176,18 +177,18 @@ function settle(b, o) {
 }
 
 /* ---------- 動作 ---------- */
-function checkBookingRules(slots) {
+function checkBookingRules(slots, kind) {
   const earliest = Utilities.formatDate(new Date(Date.now() + LEAD_DAYS * 86400e3), TZ, 'yyyy-MM-dd');
   (slots || []).forEach(k => {
     const p = k.split('|'), wd = new Date(p[0] + 'T12:00:00+08:00').getUTCDay(), h = Number(p[1]);
-    const rule = CLOSED_RULES.filter(r => r.weekday === wd && (r.fromHour == null || h >= r.fromHour) && (r.toHour == null || h < r.toHour))[0];
-    if (rule) throw new Error(fmtSlot(k) + ' 不開放預約（' + rule.label + '）');
+    const inWin = TRAINING_WINDOWS.some(r => r.weekday === wd && (r.fromHour == null || h >= r.fromHour) && (r.toHour == null || h < r.toHour));
+    if (TRAINING_KINDS.indexOf(kind) >= 0 && !inWin) throw new Error(fmtSlot(k) + ' 不是訓練時段（機台訓練與考核只開放 ' + TRAINING_WINDOWS.map(r => r.label).join('、') + '）');
     if (p[0] < earliest) throw new Error(fmtSlot(k) + ' 未滿 ' + LEAD_DAYS + ' 天，請選 ' + earliest + ' 以後的時段');
   });
 }
 function book(b) {
   if (!b || !b.applicant || !b.applicant.name || !b.applicant.email) throw new Error('申請資料不完整');
-  checkBookingRules(b.slots);
+  checkBookingRules(b.slots, b.kind);
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
   let id, now;

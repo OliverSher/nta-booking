@@ -119,15 +119,14 @@ function field(id, label, val, { type = "text", req = false, full = false, ph = 
 /* ----- 操作說明（依程式實際流程撰寫，圖片為系統畫面截圖） ----- */
 function guide() {
   const img = (k, alt) => (window.GUIDE_IMG || {})[k] ? `<figure class="gfig"><img src="${GUIDE_IMG[k]}" alt="${esc(alt)}" loading="lazy"><figcaption>${esc(alt)}</figcaption></figure>` : "";
-  const hours = CONFIG.hours.map(h => String(h).padStart(2, "0") + ":00").join("、");
   return `<div class="guide">
   <h2>操作說明</h2><p class="hint">第一次使用請先看完以下說明，約 1 分鐘。之後可從右上角「操作說明」再回來看。</p>
   <div class="rules">
     <div><b>預約規則</b></div>
     <ul>
       <li>需<b>提前 ${CONFIG.leadDays} 天</b>預約（例如今天 ${ymd(new Date()).slice(5).replace("-", "/")}，最早可預約 ${ymd(earliestBookableDate()).slice(5).replace("-", "/")}）。</li>
-      <li>可預約時段：週一至週五，每格 1 小時，起始時間 ${hours}（12:00–13:00 午休）。</li>
-      <li><b>固定不開放：</b>${esc(closedRulesText())}。</li>
+      <li>可預約時段：週一至週五 10:00–17:00，每格 1 小時。</li>
+      <li><b>機台訓練與考核</b>只開放：${esc(trainingWindowsText())}。<b>自行操作</b>不受此限制。</li>
       <li>送出後時段為「待確認」，管理人員核准後才正式保留，系統會寄 Email 通知。</li>
     </ul>
   </div>
@@ -197,7 +196,7 @@ function slotPicker(kind, max, label) {
   if (!S.slotsLoaded) return `<p class="empty">正在載入可預約時段…</p>`;
   const sel = S.slots[kind];
   return `${S.slotsError ? `<p class="err">${esc(S.slotsError)}</p>` : ""}
-  ${calendarHtml({ offset: S.weekOffset, minOffset: firstBookableWeekOffset(), maxOffset: CONFIG.weeksAhead, map: S.slotMap, selected: sel })}
+  ${calendarHtml({ offset: S.weekOffset, minOffset: firstBookableWeekOffset(), maxOffset: CONFIG.weeksAhead, map: S.slotMap, selected: sel, kind })}
   <p class="hint" style="margin:6px 0 0">${label}，最多選 ${max} 格。${S.slotsRefreshing ? `<span style="color:var(--accent)">　正在更新最新時段…</span>` : ""}</p>
   ${sel.length ? `<p class="mono" style="font-size:.82rem;margin:6px 0 0">已選：${sel.slice().sort(slotCmp).map(fmtSlot).join("、")}</p>` : ""}`;
 }
@@ -376,7 +375,7 @@ document.addEventListener("click", e => {
     else {
       if (max === 1) arr.length = 0;
       else if (arr.length >= max) { showErr(`單次最多預約 ${max} 小時`); return; }
-      else if (arr.length && !contiguous([...arr, key])) { showErr("同一筆預約請選同一天的連續時段（午休前後可相連）"); return; }
+      else if (arr.length && !contiguous([...arr, key])) { showErr("同一筆預約請選同一天的連續時段"); return; }
       arr.push(key);
     }
     render(); return;

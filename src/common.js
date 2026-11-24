@@ -28,16 +28,17 @@ const CONFIG = {
   billUnitMinutes: 15,                           // 簽退計費單位（分鐘），不足一單位以一單位計
   selfCheckoutDays: 7,                           // 預約開始後幾天內可自行簽退（超過由管理人員代為簽退）
   paymentNote: "請於收到繳費單後依機台管理單位指示完成繳費；校內計畫經費請辦理經費轉帳。",  // 繳費單上的繳費說明
-  hours: [9, 10, 11, 13, 14, 15, 16],            // 可預約起始時段（避開午休 12:00）
+  hours: [10, 11, 12, 13, 14, 15, 16],            // 可預約起始時段（10:00–17:00，每格 1 小時）
   maxSelfHours: 4,                               // 自行操作單次最多時數
   weeksAhead: 8,                                 // 開放預約幾週內的時段
   leadDays: 3,                                   // 需提前幾天預約（以日期計：今天 11/24 → 最早可預約 11/27）
-  // 固定不開放的時段（每週重複）：weekday 1=週一…5=週五；fromHour／toHour 不填代表整天
-  closedRules: [
-    { weekday: 2, fromHour: 14, label: "週二 14:00 後不開放" },
-    { weekday: 3, label: "週三不開放" },
-    { weekday: 4, toHour: 18, label: "週四白天不開放" }
+  // 機台訓練與考核只開放以下時段（每週重複）；自行操作不受限制。weekday 1=週一…5=週五；fromHour／toHour 不填代表整天
+  trainingWindows: [
+    { weekday: 2, fromHour: 14, label: "週二 14:00 後" },
+    { weekday: 3, label: "週三整天" },
+    { weekday: 4, label: "週四白天" }
   ],
+  trainingKinds: ["training", "exam"],           // 套用上述時段限制的預約類型（機台訓練、機台考核）
   maxTrainees: 6,                                // 機台訓練一次最多幾人
   trainingPerPerson: true,                       // true = 訓練課程費用按人數計（每人一套）
   departments: ["動力機械工程學系", "奈米工程與微系統研究所", "化學工程學系", "材料科學工程學系", "醫學科學系", "生命科學系", "分析與環境科學研究所", "校外單位", "其他（請於備註說明）"]
@@ -92,14 +93,15 @@ const STATUS_LABEL = { pending: "待確認", approved: "已核准", completed: "
 const WD = ["一", "二", "三", "四", "五"];
 /* 固定不開放與提前預約規則 */
 function slotWeekday(k) { return new Date(k.split("|")[0] + "T12:00:00+08:00").getUTCDay(); }
-function closedRule(k) {
+function inTrainingWindow(k) {
   const wd = slotWeekday(k), h = +k.split("|")[1];
-  return CONFIG.closedRules.find(r => r.weekday === wd && (r.fromHour == null || h >= r.fromHour) && (r.toHour == null || h < r.toHour)) || null;
+  return CONFIG.trainingWindows.some(r => r.weekday === wd && (r.fromHour == null || h >= r.fromHour) && (r.toHour == null || h < r.toHour));
 }
+const isTrainingKind = kind => CONFIG.trainingKinds.includes(kind);
 function earliestBookableDate() { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + CONFIG.leadDays); return d; }
 function tooEarly(k) { return new Date(k.split("|")[0] + "T00:00:00") < earliestBookableDate(); }
 function firstBookableWeekOffset() { return Math.round((mondayOf(earliestBookableDate()) - mondayOf(new Date())) / (7 * 86400e3)); }
-function closedRulesText() { return CONFIG.closedRules.map(r => r.label).join("、"); }
+function trainingWindowsText() { return CONFIG.trainingWindows.map(r => r.label).join("、"); }
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -246,13 +248,14 @@ function conflictSlots(err) { const m = String(err.message || "").match(/^CONFLI
    週曆
    map: { "YYYY-MM-DD|H": {state:"pending"|"booked"|"locked", id?, reason?} }
    ===================================================================== */
-function calendarHtml({ offset, minOffset, maxOffset, map = {}, selected = [], admin = false, focusId = "" }) {
+function calendarHtml({ offset, minOffset, maxOffset, map = {}, selected = [], admin = false, focusId = "", kind = "" }) {
+  const trainOnly = !admin && isTrainingKind(kind);
   const days = weekDays(offset);
   const head = `<tr><th class="time"></th>${days.map((d, i) => `<th>週${WD[i]}<br><span class="mono">${d.getMonth() + 1}/${d.getDate()}</span>${admin ? `<br><button class="daybtn" data-day="${ymd(d)}">整天鎖定</button>` : ""}</th>`).join("")}</tr>`;
   const rows = CONFIG.hours.map(h => `<tr><th class="time">${String(h).padStart(2, "0")}:00</th>${days.map(d => {
-    const key = ymd(d) + "|" + h, info = map[key], on = selected.includes(key), past = slotIsPast(key), rule = closedRule(key);
+    const key = ymd(d) + "|" + h, info = map[key], on = selected.includes(key), past = slotIsPast(key), rule = trainOnly && !inTrainingWindow(key);
     let cls = "slot", label = "", dis = false, title = fmtSlot(key);
-    if (rule) { cls += " locked closed"; label = admin ? "固定不開放" : "不開放"; title += "｜" + rule.label; if (!admin) dis = true; }
+    if (rule && !info) { cls += " locked closed"; label = "非訓練時段"; title += "｜訓練／考核只開放 " + trainingWindowsText(); dis = true; }
     else if (info) {
       cls += " " + info.state;
       label = { pending: "待確認", booked: "已預約", locked: "暫停開放" }[info.state];
@@ -268,8 +271,8 @@ function calendarHtml({ offset, minOffset, maxOffset, map = {}, selected = [], a
   return `<div class="weeknav"><button class="b ghost" data-act="wprev"${offset <= minOffset ? " disabled" : ""}>‹ 上一週</button>
     <span class="mono">${ymd(days[0])} – ${ymd(days[4])}</span><button class="b ghost" data-act="wnext"${offset >= maxOffset ? " disabled" : ""}>下一週 ›</button></div>
   <div class="cal-scroll"><table class="cal">${head}${rows}</table></div>
-  <div class="legend"><span><i></i>可預約</span>${admin ? "" : `<span><i style="background:var(--accent);border-color:var(--accent)"></i>已選取</span>`}<span><i style="background:var(--warn-soft);border-color:transparent"></i>待確認</span><span><i style="background:var(--busy);border-color:transparent"></i>已預約</span><span><i style="background:repeating-linear-gradient(135deg,var(--busy) 0 4px,var(--surface) 4px 7px)"></i>不開放／暫停開放</span>${admin ? "" : `<span><i style="opacity:.45"></i>未滿 ${CONFIG.leadDays} 天或已過去，不能預約</span>`}</div>
-  <p class="hint" style="margin:4px 0 0">固定不開放：${esc(closedRulesText())}。預約需提前 ${CONFIG.leadDays} 天。</p>`;
+  <div class="legend"><span><i></i>可預約</span>${admin ? "" : `<span><i style="background:var(--accent);border-color:var(--accent)"></i>已選取</span>`}<span><i style="background:var(--warn-soft);border-color:transparent"></i>待確認</span><span><i style="background:var(--busy);border-color:transparent"></i>已預約</span><span><i style="background:repeating-linear-gradient(135deg,var(--busy) 0 4px,var(--surface) 4px 7px)"></i>${trainOnly ? "非訓練時段／暫停開放" : "暫停開放"}</span>${admin ? "" : `<span><i style="opacity:.45"></i>未滿 ${CONFIG.leadDays} 天或已過去，不能預約</span>`}</div>
+  ${admin ? "" : `<p class="hint" style="margin:4px 0 0">預約需提前 ${CONFIG.leadDays} 天。${trainOnly ? `機台訓練與考核只開放：<b>${esc(trainingWindowsText())}</b>。` : ""}</p>`}`;
 }
 
 /* =====================================================================
@@ -352,9 +355,9 @@ function billPages(b) {
   else usage.push(["結算日期", fmtDateTime(b.checkoutAt)]);
   usage.push(["收費身分", billingLabel(a)]);
   if (unit === "套") usage.push(["計費方式", `${money(b.billRate)} / 套 × ${b.hours || 1}（${esc(b.priceNote || "訓練課程")}）`]);
-  if (b.kind === "training" && (b.details || {}).trainees) usage.push(["受訓人員", (b.details.trainees || []).filter(Boolean).join("、")]);
   else usage.push(["計費時間", `${fmtDuration(b.billMinutes)}（${b.billMinutes / CONFIG.billUnitMinutes} 單位 × ${CONFIG.billUnitMinutes} 分鐘）`],
     ["單價", `${money(b.billRate)} / hr`]);
+  if (b.kind === "training" && (b.details || {}).trainees) usage.push(["受訓人員", (b.details.trainees || []).filter(Boolean).join("、")]);
   usage.push(["應繳金額", H(`<b style="font-size:16px">${money(b.billAmount)}</b>`)]);
   if (b.adminNote) usage.push(["備註", b.adminNote]);
   const page = (n, label, extra) => `<div class="a4"><div class="fit">

@@ -172,13 +172,12 @@ document.addEventListener("click", async e => {
   }
   if (t.dataset.slot) {
     const key = t.dataset.slot, info = adminSlotMap()[key];
-    if (closedRule(key)) { A.err = `${fmtSlot(key)} 是固定不開放時段（${closedRule(key).label}），如需調整請修改 CONFIG.closedRules。`; render(); return; }
     if (!info) { act("admin_lock", { slots: [key], reason: A.lockReason || "" }, `已鎖定 ${fmtSlot(key)}`); return; }
     if (info.state === "locked") { act("admin_unlock", { slots: [key] }, `已解除鎖定 ${fmtSlot(key)}`); return; }
     A.focusId = info.id; render(); return;
   }
   if (t.dataset.day) {
-    const map = adminSlotMap(), keys = CONFIG.hours.map(h => t.dataset.day + "|" + h).filter(k => !map[k] && !closedRule(k));
+    const map = adminSlotMap(), keys = CONFIG.hours.map(h => t.dataset.day + "|" + h).filter(k => !map[k]);
     if (!keys.length) { A.err = "這一天已沒有可鎖定的空白時段"; render(); return; }
     act("admin_lock", { slots: keys, reason: A.lockReason || "" }, `已鎖定 ${t.dataset.day} 的 ${keys.length} 個時段`); return;
   }
