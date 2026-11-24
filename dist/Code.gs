@@ -367,8 +367,8 @@ function billHtml(b) {
   if (b.kind === 'self' && b.submittedAt) use.push(['簽退送出時間', fmtTime(b.submittedAt)]);
   use.push(['收費身分', groupLabelOf(a)]);
   if (b.unit === '套') use.push(['計費方式', money(b.billRate) + ' / 套 × ' + (b.hours || 1) + '（' + (b.priceNote || '訓練課程') + '）']);
-  if (b.kind === 'training' && (b.details || {}).trainees) use.push(['受訓人員', b.details.trainees.filter(String).join('、')]);
   else use.push(['計費時間', fmtDuration(b.billMinutes) + '（' + (b.billMinutes / BILL_UNIT_MINUTES) + ' 單位 × ' + BILL_UNIT_MINUTES + ' 分鐘）'], ['單價', money(b.billRate) + ' / hr']);
+  if (b.kind === 'training' && (b.details || {}).trainees) use.push(['受訓人員', b.details.trainees.filter(String).join('、')]);
   use.push(['應繳金額', '<b style="font-size:15px">' + money(b.billAmount) + '</b>', true]);
   if (b.adminNote) use.push(['備註', b.adminNote]);
   const sig = '<table style="width:100%;border-collapse:separate;border-spacing:8px 0;margin-top:6px"><tr>' + ['申請人簽名', '指導教授簽名', '機台管理人員簽名'].map(x =>
