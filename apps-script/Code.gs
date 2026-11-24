@@ -13,7 +13,7 @@ const NOTIFY_EMAIL = '';
 // ★ 預約網站網址（通知信裡的連結會用到）
 const SITE_URL = 'https://ylwanglab327.github.io/NTA-booking/';
 
-// ★ 門禁管理員信箱：預約核准後寄「門禁開通申請」、已核准的預約取消時寄「門禁取消」。留空 = 不寄。多人用逗號分隔。
+// ★ 門禁管理員信箱：預約核准後寄「門禁開通申請」、已核准的預約取消時寄「門禁取消」（同時副本給 NOTIFY_EMAIL）。留空 = 不寄。多人用逗號分隔。
 const DOOR_EMAIL = '';
 // ★ 機台位置（會寫在門禁信裡）
 const ROOM_NAME = '【請填入機台位置，例如：工程一館 ○○○ 室】';
@@ -302,7 +302,7 @@ function unlockSlots(slots) {
 /* ---------- Email 通知 ---------- */
 function adminEmail() { return NOTIFY_EMAIL || Session.getEffectiveUser().getEmail(); }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
-function sendMail(to, subject, rowsArr, intro, outro, attachments) {
+function sendMail(to, subject, rowsArr, intro, outro, attachments, cc) {
   if (!to) return;
   const table = '<table style="border-collapse:collapse;font-size:14px">' + rowsArr.filter(r => r[1] !== '' && r[1] != null).map(r =>
     '<tr><td style="padding:4px 12px 4px 0;color:#666;white-space:nowrap;vertical-align:top">' + esc(r[0]) + '</td><td style="padding:4px 0">' + (r[2] ? r[1] : esc(r[1]).replace(/\n/g, '<br>')) + '</td></tr>').join('') + '</table>';
@@ -311,6 +311,7 @@ function sendMail(to, subject, rowsArr, intro, outro, attachments) {
     '<p style="color:#888;font-size:12px;margin-top:24px">此信由 NTA 機台預約系統自動寄出。</p></div>';
   const msg = { to: to, subject: subject, htmlBody: html, name: 'NTA 機台預約系統', replyTo: adminEmail() };
   if (attachments && attachments.length) msg.attachments = attachments;
+  if (cc) msg.cc = cc;
   try { MailApp.sendEmail(msg); }
   catch (e) { console.error('寄信失敗：' + e); }
 }
@@ -357,12 +358,12 @@ function notifyDoor(b, mode) {
   if (mode === 'cancel') {
     sendMail(DOOR_EMAIL, '【NTA 門禁取消】' + ranges[0] + '｜' + who, rows,
       '門禁管理員您好：<br>以下 NTA 機台預約已取消，先前申請的門禁開通請一併取消，謝謝。',
-      '如有疑問請直接回覆此信，會寄到機台管理人員信箱。');
+      '如有疑問請直接回覆此信，會寄到機台管理人員信箱。', null, adminEmail());
     return;
   }
   sendMail(DOOR_EMAIL, '【NTA 門禁開通申請】' + ranges[0] + (ranges.length > 1 ? ' 等 ' + ranges.length + ' 段' : '') + '｜' + who, rows,
     '門禁管理員您好：<br>以下 NTA 機台使用預約已由機台管理人員核准，煩請協助於下列時段開通 <b>' + esc(ROOM_NAME) + '</b> 的門禁權限，謝謝。',
-    '使用人為上述申請人' + (trainees.length ? '及受訓人員' : '') + '，使用結束後即可關閉權限。<br>如有疑問請直接回覆此信，會寄到機台管理人員信箱。');
+    '使用人為上述申請人' + (trainees.length ? '及受訓人員' : '') + '，使用結束後即可關閉權限。<br>如有疑問請直接回覆此信，會寄到機台管理人員信箱。', null, adminEmail());
 }
 function notifyStatus(b) {
   const a = b.applicant || {}, st = STATUS_LABEL[b.status] || b.status;
