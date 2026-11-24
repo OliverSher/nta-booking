@@ -126,7 +126,7 @@ function guide() {
     <ul>
       <li>需<b>提前 ${CONFIG.leadDays} 天</b>預約（例如今天 ${ymd(new Date()).slice(5).replace("-", "/")}，最早可預約 ${ymd(earliestBookableDate()).slice(5).replace("-", "/")}）。</li>
       <li>可預約時段：週一至週五 10:00–17:00，每格 1 小時。</li>
-      <li><b>機台訓練與考核</b>只開放：${esc(trainingWindowsText())}。<b>自行操作</b>不受此限制。</li>
+      <li><b>機台訓練與考核</b>不開放：${esc(trainingClosedText())}。<b>自行操作</b>不受此限制。</li>
       <li>送出後時段為「待確認」，管理人員核准後才正式保留，系統會寄 Email 通知。</li>
     </ul>
   </div>

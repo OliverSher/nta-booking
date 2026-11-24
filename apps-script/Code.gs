@@ -26,9 +26,9 @@ const INSTRUMENT = '奈米粒子追蹤分析儀 (NTA)';
 const PAYMENT_NOTE = '請於收到繳費單後依機台管理單位指示完成繳費；校內計畫經費請辦理經費轉帳。';
 const GROUP_LABEL = { coe: '清大工學院', nthu: '清大（工學院以外）', academic: '學界（校外學術單位）', industry: '業界' };
 
-// 預約規則（需與網站 CONFIG.leadDays、CONFIG.trainingWindows、CONFIG.trainingKinds 相同）
+// 預約規則（需與網站 CONFIG.leadDays、CONFIG.trainingClosed、CONFIG.trainingKinds 相同）
 const LEAD_DAYS = 3;
-const TRAINING_WINDOWS = [   // 機台訓練與考核只開放這些時段；自行操作不受限制
+const TRAINING_CLOSED = [   // 機台訓練與考核「不開放」這些時段；自行操作不受限制
   { weekday: 2, fromHour: 14, label: '週二 14:00 後' },
   { weekday: 3, label: '週三整天' },
   { weekday: 4, label: '週四白天' }
@@ -188,8 +188,8 @@ function checkBookingRules(slots, kind) {
   const earliest = Utilities.formatDate(new Date(Date.now() + LEAD_DAYS * 86400e3), TZ, 'yyyy-MM-dd');
   (slots || []).forEach(k => {
     const p = k.split('|'), wd = new Date(p[0] + 'T12:00:00+08:00').getUTCDay(), h = Number(p[1]);
-    const inWin = TRAINING_WINDOWS.some(r => r.weekday === wd && (r.fromHour == null || h >= r.fromHour) && (r.toHour == null || h < r.toHour));
-    if (TRAINING_KINDS.indexOf(kind) >= 0 && !inWin) throw new Error(fmtSlot(k) + ' 不是訓練時段（機台訓練與考核只開放 ' + TRAINING_WINDOWS.map(r => r.label).join('、') + '）');
+    const closed = TRAINING_CLOSED.some(r => r.weekday === wd && (r.fromHour == null || h >= r.fromHour) && (r.toHour == null || h < r.toHour));
+    if (TRAINING_KINDS.indexOf(kind) >= 0 && closed) throw new Error(fmtSlot(k) + ' 不開放訓練（機台訓練與考核不開放 ' + TRAINING_CLOSED.map(r => r.label).join('、') + '）');
     if (p[0] < earliest) throw new Error(fmtSlot(k) + ' 未滿 ' + LEAD_DAYS + ' 天，請選 ' + earliest + ' 以後的時段');
   });
 }

@@ -32,8 +32,8 @@ const CONFIG = {
   maxSelfHours: 4,                               // 自行操作單次最多時數
   weeksAhead: 8,                                 // 開放預約幾週內的時段
   leadDays: 3,                                   // 需提前幾天預約（以日期計：今天 11/24 → 最早可預約 11/27）
-  // 機台訓練與考核只開放以下時段（每週重複）；自行操作不受限制。weekday 1=週一…5=週五；fromHour／toHour 不填代表整天
-  trainingWindows: [
+  // 機台訓練與考核「不開放」以下時段（每週重複）；自行操作不受限制。weekday 1=週一…5=週五；fromHour／toHour 不填代表整天
+  trainingClosed: [
     { weekday: 2, fromHour: 14, label: "週二 14:00 後" },
     { weekday: 3, label: "週三整天" },
     { weekday: 4, label: "週四白天" }
@@ -93,15 +93,15 @@ const STATUS_LABEL = { pending: "待確認", approved: "已核准", completed: "
 const WD = ["一", "二", "三", "四", "五"];
 /* 固定不開放與提前預約規則 */
 function slotWeekday(k) { return new Date(k.split("|")[0] + "T12:00:00+08:00").getUTCDay(); }
-function inTrainingWindow(k) {
+function inTrainingClosed(k) {
   const wd = slotWeekday(k), h = +k.split("|")[1];
-  return CONFIG.trainingWindows.some(r => r.weekday === wd && (r.fromHour == null || h >= r.fromHour) && (r.toHour == null || h < r.toHour));
+  return CONFIG.trainingClosed.some(r => r.weekday === wd && (r.fromHour == null || h >= r.fromHour) && (r.toHour == null || h < r.toHour));
 }
 const isTrainingKind = kind => CONFIG.trainingKinds.includes(kind);
 function earliestBookableDate() { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + CONFIG.leadDays); return d; }
 function tooEarly(k) { return new Date(k.split("|")[0] + "T00:00:00") < earliestBookableDate(); }
 function firstBookableWeekOffset() { return Math.round((mondayOf(earliestBookableDate()) - mondayOf(new Date())) / (7 * 86400e3)); }
-function trainingWindowsText() { return CONFIG.trainingWindows.map(r => r.label).join("、"); }
+function trainingClosedText() { return CONFIG.trainingClosed.map(r => r.label).join("、"); }
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -253,9 +253,9 @@ function calendarHtml({ offset, minOffset, maxOffset, map = {}, selected = [], a
   const days = weekDays(offset);
   const head = `<tr><th class="time"></th>${days.map((d, i) => `<th>週${WD[i]}<br><span class="mono">${d.getMonth() + 1}/${d.getDate()}</span>${admin ? `<br><button class="daybtn" data-day="${ymd(d)}">整天鎖定</button>` : ""}</th>`).join("")}</tr>`;
   const rows = CONFIG.hours.map(h => `<tr><th class="time">${String(h).padStart(2, "0")}:00</th>${days.map(d => {
-    const key = ymd(d) + "|" + h, info = map[key], on = selected.includes(key), past = slotIsPast(key), rule = trainOnly && !inTrainingWindow(key);
+    const key = ymd(d) + "|" + h, info = map[key], on = selected.includes(key), past = slotIsPast(key), rule = trainOnly && inTrainingClosed(key);
     let cls = "slot", label = "", dis = false, title = fmtSlot(key);
-    if (rule && !info) { cls += " locked closed"; label = "非訓練時段"; title += "｜訓練／考核只開放 " + trainingWindowsText(); dis = true; }
+    if (rule && !info) { cls += " locked closed"; label = "不開放訓練"; title += "｜訓練／考核不開放 " + trainingClosedText(); dis = true; }
     else if (info) {
       cls += " " + info.state;
       label = { pending: "待確認", booked: "已預約", locked: "暫停開放" }[info.state];
@@ -271,8 +271,8 @@ function calendarHtml({ offset, minOffset, maxOffset, map = {}, selected = [], a
   return `<div class="weeknav"><button class="b ghost" data-act="wprev"${offset <= minOffset ? " disabled" : ""}>‹ 上一週</button>
     <span class="mono">${ymd(days[0])} – ${ymd(days[4])}</span><button class="b ghost" data-act="wnext"${offset >= maxOffset ? " disabled" : ""}>下一週 ›</button></div>
   <div class="cal-scroll"><table class="cal">${head}${rows}</table></div>
-  <div class="legend"><span><i></i>可預約</span>${admin ? "" : `<span><i style="background:var(--accent);border-color:var(--accent)"></i>已選取</span>`}<span><i style="background:var(--warn-soft);border-color:transparent"></i>待確認</span><span><i style="background:var(--busy);border-color:transparent"></i>已預約</span><span><i style="background:repeating-linear-gradient(135deg,var(--busy) 0 4px,var(--surface) 4px 7px)"></i>${trainOnly ? "非訓練時段／暫停開放" : "暫停開放"}</span>${admin ? "" : `<span><i style="opacity:.45"></i>未滿 ${CONFIG.leadDays} 天或已過去，不能預約</span>`}</div>
-  ${admin ? "" : `<p class="hint" style="margin:4px 0 0">預約需提前 ${CONFIG.leadDays} 天。${trainOnly ? `機台訓練與考核只開放：<b>${esc(trainingWindowsText())}</b>。` : ""}</p>`}`;
+  <div class="legend"><span><i></i>可預約</span>${admin ? "" : `<span><i style="background:var(--accent);border-color:var(--accent)"></i>已選取</span>`}<span><i style="background:var(--warn-soft);border-color:transparent"></i>待確認</span><span><i style="background:var(--busy);border-color:transparent"></i>已預約</span><span><i style="background:repeating-linear-gradient(135deg,var(--busy) 0 4px,var(--surface) 4px 7px)"></i>${trainOnly ? "不開放訓練／暫停開放" : "暫停開放"}</span>${admin ? "" : `<span><i style="opacity:.45"></i>未滿 ${CONFIG.leadDays} 天或已過去，不能預約</span>`}</div>
+  ${admin ? "" : `<p class="hint" style="margin:4px 0 0">預約需提前 ${CONFIG.leadDays} 天。${trainOnly ? `機台訓練與考核不開放：<b>${esc(trainingClosedText())}</b>。` : ""}</p>`}`;
 }
 
 /* =====================================================================

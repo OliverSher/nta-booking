@@ -46,7 +46,7 @@ apps-script/Code.gs Google Apps Script 後端（資料存在 Google 試算表）
 ## 預約規則
 - 進入預約頁會先顯示「操作說明」（截圖在 `src/guide/*.jpg`，建置時內嵌）
 - 需提前 `leadDays`（3）天預約；時段為每天 10:00–17:00
-- 機台訓練與考核只能預約 `trainingWindows` 設定的時段（週二 14:00 後、週三整天、週四白天），自行操作不受限制
+- 機台訓練與考核不能預約 `trainingClosed` 設定的時段（週二 14:00 後、週三整天、週四白天），自行操作不受限制
 - 機台訓練可填受訓人數與姓名，`trainingPerPerson` 為 true 時訓練費按人數計
 
 ## 運作方式
